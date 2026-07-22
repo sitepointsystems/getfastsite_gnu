@@ -1,0 +1,113 @@
+{% extends 'dash-layout.html.twig' %}
+
+{% block body %}
+<div class="head-row">
+  <div>
+    <h1 style="margin:0">{{ trash ? 'Trash' : 'Sites' }}</h1>
+    <p class="sub" style="margin:.3rem 0 0">{{ trash ? 'Deleted sites — recover them, or delete permanently.' : 'Everything you publish through fastsite.' }}</p>
+  </div>
+  <div>
+    {% if trash %}
+      <a class="button small ghost" href="/">← Back to sites</a>
+    {% elseif trash_count %}
+      <a class="button small ghost" href="/?trash=1">Trash ({{ trash_count }})</a>
+    {% endif %}
+  </div>
+</div>
+
+{% if cards is empty %}
+  <div class="card" style="margin-top:1.25rem">
+    {% if trash %}Trash is empty.{% else %}No sites yet{% if user.role == 'admin' %} — create one under <a href="/admin/sites">Sites &amp; webhooks</a>{% else %} — ask an admin to give you access{% endif %}.{% endif %}
+  </div>
+{% endif %}
+
+<div class="cards cards-wide" style="margin-top:1.25rem">
+{% for c in cards %}
+  <div class="card">
+    <a class="card-thumb" href="/sites/{{ c.site.handle }}/preview/" target="_blank" rel="noopener" title="Open preview">
+      <img src="/sites/{{ c.site.handle }}/card.png" alt="" loading="lazy" onerror="this.closest('.card-thumb').classList.add('empty')">
+      <span class="card-thumb-fallback">{{ c.site.name|slice(0, 1)|upper }}</span>
+    </a>
+    <h2 style="margin:0 0 .2rem">{{ c.site.name }}</h2>
+    <p class="mut" style="margin:0 0 .8rem;font-size:.85rem">
+      {% if c.site.baseUrl %}<a href="{{ c.site.baseUrl }}" rel="noopener" target="_blank">{{ c.site.baseUrl }}</a>{% else %}no URL configured{% endif %}
+    </p>
+    <dl class="kv">
+      <dt>Status</dt><dd><span class="badge {{ c.site.status == 'active' ? 'ok' : 'mut' }}">{{ c.site.status }}</span></dd>
+      <dt>Content</dt><dd>{{ c.counts.published|default(0) }} published, {{ c.counts.draft|default(0) }} draft</dd>
+      <dt>Languages</dt><dd>{{ c.site.primaryLocale }}{% for l in c.site.locales %}, {{ l }}{% endfor %}</dd>
+      {% if trash %}
+        <dt>Deleted</dt><dd class="mut">{{ c.site.deletedAt }}</dd>
+      {% else %}
+        <dt>Last build</dt>
+        <dd>
+          {% if c.last_build %}
+            <span class="badge {{ c.last_build.status }}">{{ c.last_build.status }}</span>
+            <span class="mut">{{ c.last_build.finished_at ?: '' }}</span>
+          {% else %}<span class="mut">never</span>{% endif %}
+        </dd>
+      {% endif %}
+    </dl>
+    <div class="card-actions">
+    {% if trash %}
+      <form method="post" action="/sites/action" class="inline">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="restore-site">
+        <input type="hidden" name="handle" value="{{ c.site.handle }}">
+        <button class="button small" type="submit">Recover</button>
+      </form>
+      <form method="post" action="/sites/action" class="inline"
+            data-confirm="Permanently delete “{{ c.site.name }}” and all of its files and history? This cannot be undone."
+            data-confirm-title="Delete permanently" data-confirm-ok="Delete permanently" data-confirm-danger
+            data-confirm-match="{{ c.site.handle }}" data-confirm-match-label="Type the handle “{{ c.site.handle }}” to confirm">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="purge-site">
+        <input type="hidden" name="handle" value="{{ c.site.handle }}">
+        <input type="hidden" name="confirm_handle" value="" data-confirm-input>
+        <button class="button small danger" type="submit">Delete permanently</button>
+      </form>
+    {% else %}
+      <a class="button small" href="/sites/{{ c.site.handle }}/content">Content</a>
+      <a class="button small ghost" href="/sites/{{ c.site.handle }}/media">Media</a>
+      <a class="button small ghost" href="/sites/{{ c.site.handle }}/files">Files</a>
+      <a class="button small ghost" href="/sites/{{ c.site.handle }}/components">Components</a>
+      <a class="button small ghost" href="/sites/{{ c.site.handle }}/preview/" target="_blank" rel="noopener">Preview ↗</a>
+      <form method="post" action="/sites/{{ c.site.handle }}/content/action" class="inline">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="publish-site">
+        <button class="button small" type="submit">Publish</button>
+      </form>
+      <div class="kebab">
+        <button type="button" class="kebab-trigger" data-kebab aria-label="More actions" aria-haspopup="true">⋮</button>
+        <div class="kebab-menu">
+          <a href="/sites/{{ c.site.handle }}/settings">Settings</a>
+          <a href="/sites/{{ c.site.handle }}/webhooks">Webhooks</a>
+          <div class="danger-zone">
+            <div class="zone-label">Danger zone</div>
+            <form method="post" action="/sites/action"
+                  data-confirm="Move “{{ c.site.name }}” to trash? It leaves your sites list but its content and files are kept and can be recovered."
+                  data-confirm-title="Move to trash" data-confirm-ok="Move to trash" data-confirm-danger>
+              <input type="hidden" name="_csrf" value="{{ csrf }}">
+              <input type="hidden" name="action" value="soft-delete-site">
+              <input type="hidden" name="handle" value="{{ c.site.handle }}">
+              <button type="submit">Delete</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+    </div>
+  </div>
+{% endfor %}
+</div>
+<style>
+  .head-row{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap}
+  .cards-wide{grid-template-columns:repeat(auto-fill,minmax(24rem,1fr))}
+  .card-thumb{display:block;position:relative;aspect-ratio:16/10;border-radius:10px;overflow:hidden;border:1px solid var(--border);margin:-.25rem 0 1rem;background:linear-gradient(135deg,var(--bg-2),var(--surface))}
+  .card-thumb img{width:100%;height:100%;object-fit:cover;object-position:top;display:block}
+  .card-thumb-fallback{position:absolute;inset:0;display:none;align-items:center;justify-content:center;font-size:2.4rem;font-weight:800;color:var(--muted)}
+  .card-thumb.empty img{display:none}
+  .card-thumb.empty .card-thumb-fallback{display:flex}
+  .card-actions{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:1rem;align-items:center}
+</style>
+{% endblock %}

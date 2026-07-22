@@ -1,0 +1,57 @@
+{% extends 'dash-layout.html.twig' %}
+
+{% block body %}
+<h1>{{ site.name }}</h1>
+<p class="sub">Components — {{ components|length }}. Reusable blocks rendered to static markup at build (zero JS). Embed in content with <span class="mono">&lt;div data-fs-component="handle" data-values='{…}'&gt;&lt;/div&gt;</span>.</p>
+{% include 'site-nav.html.twig' %}
+
+<div class="card">
+  <h2 style="margin-top:0">New / edit component</h2>
+  <form method="post" action="/sites/{{ site.handle }}/components/action">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="op" value="save">
+    <div class="row">
+      <div><label>Handle <span class="mut">(lowercase, digits, dashes)</span></label><input type="text" name="handle" placeholder="price-badge" required></div>
+      <div class="tight"><label>Type</label>
+        <select name="type">
+          <option value="html">html ({{ '{{var}}' }} / {{ '{{{raw}}}' }})</option>
+          <option value="react">react (SSR → static)</option>
+        </select>
+      </div>
+    </div>
+    <div><label>Source code</label>
+      <textarea name="source_code" rows="10" style="width:100%;font-family:var(--mono,monospace)" placeholder="&lt;div class=&quot;badge&quot;&gt;{{ '{{label}}' }}&lt;/div&gt;" required></textarea>
+    </div>
+    <div><label>CSS <span class="mut">(optional — inlined per page that uses it)</span></label>
+      <textarea name="css" rows="4" style="width:100%;font-family:var(--mono,monospace)"></textarea>
+    </div>
+    <div><label>Variables schema <span class="mut">(optional JSON)</span></label>
+      <textarea name="variables_schema" rows="3" style="width:100%;font-family:var(--mono,monospace)" placeholder='{"label":"string"}'></textarea>
+    </div>
+    <p style="margin-top:1rem"><button class="button" type="submit">Save component</button></p>
+  </form>
+</div>
+
+<table>
+  <tr><th>Handle</th><th>Type</th><th>Status</th><th>Warnings</th><th>Embed</th><th></th></tr>
+  {% for c in components %}
+  <tr>
+    <td class="mono">{{ c.handle }}</td>
+    <td>{{ c.type }}</td>
+    <td><span class="badge {{ c.status }}">{{ c.status }}</span></td>
+    <td class="mut">{{ c.warnings|length ?: '—' }}</td>
+    <td class="mono" style="user-select:all">&lt;div data-fs-component="{{ c.handle }}" data-values='{}'&gt;&lt;/div&gt;</td>
+    <td>
+      <form method="post" action="/sites/{{ site.handle }}/components/action" onsubmit="return confirm('Delete component {{ c.handle }}?')">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="op" value="delete">
+        <input type="hidden" name="handle" value="{{ c.handle }}">
+        <button class="button small ghost" type="submit">Delete</button>
+      </form>
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="mut">No components yet.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

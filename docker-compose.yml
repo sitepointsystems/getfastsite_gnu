@@ -1,0 +1,47 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        # public is the only flavor in this distribution.
+        FLAVOR: ${FLAVOR:-public}
+    expose:
+      - "8080"
+    environment:
+      - APP_ENV=production
+      - APP_URL=${APP_URL}
+      - APP_SECRET=${APP_SECRET}
+      - DATA_PATH=/data
+      - REDIS_URL=tcp://redis:6379
+      - GIT_AUTHOR_NAME=${GIT_AUTHOR_NAME:-fastsite}
+      - GIT_AUTHOR_EMAIL=${GIT_AUTHOR_EMAIL:-engine@fastsite.local}
+    volumes:
+      - fastsite-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - fastsite-redis:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  fastsite-data:
+  fastsite-redis:

@@ -1,0 +1,149 @@
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  line-height: 1.6;
+  font-size: 1.0625rem;
+}
+
+.wrap { max-width: var(--wrap); margin: 0 auto; padding: 0 1.25rem; }
+.reading { max-width: var(--reading); }
+.center { text-align: center; }
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { color: var(--accent-hover); text-decoration: underline; }
+a:focus-visible, .button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--accent);
+  color: #04211a;
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-sm);
+  z-index: 10;
+}
+.skip-link:focus { left: 0.5rem; top: 0.5rem; }
+
+/* header */
+.site-header {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+}
+.site-header .wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 3.75rem;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.brand { font-weight: 700; font-size: 1.15rem; color: var(--text); }
+.brand:hover { color: var(--accent); text-decoration: none; }
+.site-header nav { display: flex; gap: 1.25rem; }
+.site-header nav a { color: var(--text-2); }
+.site-header nav a:hover { color: var(--text); text-decoration: none; }
+
+/* hero */
+.hero {
+  padding: 4.5rem 0 3.5rem;
+  background:
+    radial-gradient(120% 120% at 50% 0%, rgba(6, 214, 160, 0.08), transparent 60%),
+    var(--bg);
+  text-align: center;
+}
+.hero h1 {
+  margin: 0;
+  font-size: clamp(2rem, 5vw, 3.25rem);
+  letter-spacing: -0.02em;
+}
+
+/* sections & cards */
+.section { padding: 3rem 0; }
+.section h2 { font-size: 1.5rem; margin: 0 0 1.5rem; }
+
+.cards {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+.card:hover { box-shadow: var(--glow); transform: translateY(-2px); }
+.card h2, .card h3 { margin: 0 0 0.5rem; font-size: 1.2rem; }
+.card p { margin: 0 0 0.75rem; color: var(--text-2); }
+.card time { color: var(--muted); font-size: 0.875rem; }
+/* Featured image bleeds to the card's top edge; fixed box = no layout shift. */
+.card .card-media { display: block; margin: -1.5rem -1.5rem 1.1rem; border-radius: var(--radius) var(--radius) 0 0; overflow: hidden; }
+.card .card-media picture { display: block; }
+.card .card-media img { width: 100%; height: 190px; object-fit: cover; display: block; }
+
+/* article */
+.article-header { margin-bottom: 2rem; }
+.article-header h1 {
+  font-size: clamp(1.75rem, 4vw, 2.5rem);
+  letter-spacing: -0.02em;
+  margin: 0 0 0.5rem;
+}
+.article-meta { color: var(--muted); margin: 0; }
+
+.article-body h2 { margin-top: 2.25rem; }
+/* Links in prose must not rely on colour alone (WCAG 1.4.1). */
+.article-body a { text-decoration: underline; text-underline-offset: 2px; }
+.article-body img, .article-body video { max-width: 100%; height: auto; border-radius: var(--radius-sm); }
+.article-body pre {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1rem;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 0.9rem;
+}
+.article-body code { font-family: var(--mono); font-size: 0.925em; }
+.article-body blockquote {
+  margin: 1.5rem 0;
+  padding: 0.25rem 0 0.25rem 1.25rem;
+  border-left: 3px solid var(--accent);
+  color: var(--text-2);
+}
+.article-body table { border-collapse: collapse; width: 100%; }
+.article-body th, .article-body td {
+  border: 1px solid var(--border);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+}
+
+/* buttons */
+.button {
+  display: inline-block;
+  background: var(--accent);
+  color: #04211a;
+  font-weight: 600;
+  padding: 0.65rem 1.4rem;
+  border-radius: var(--radius-sm);
+}
+.button:hover { background: var(--accent-hover); color: #04211a; text-decoration: none; }
+
+/* footer */
+.site-footer {
+  border-top: 1px solid var(--border);
+  margin-top: 3rem;
+  padding: 2rem 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}

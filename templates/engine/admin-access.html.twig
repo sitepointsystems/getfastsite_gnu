@@ -1,0 +1,107 @@
+{% extends 'dash-layout.html.twig' %}
+
+{% block body %}
+<h1>Access</h1>
+<p class="sub">Every credential the engine has issued.</p>
+
+<h2>API keys</h2>
+<table>
+  <tr><th>Owner</th><th>Name</th><th>Key</th><th>Scopes</th><th>Sites</th><th>Last used</th><th>Status</th><th></th></tr>
+  {% for k in keys %}
+  <tr>
+    <td class="mut">{{ k.email }}</td>
+    <td>{{ k.name }}</td>
+    <td class="mono">fs_{{ k.key_id }}_…</td>
+    <td class="mut" style="max-width:12rem">{{ k.scopes }}</td>
+    <td class="mut">{{ k.sites }}</td>
+    <td class="mut">{{ k.last_used_at ?: 'never' }}</td>
+    <td>{% if k.revoked_at %}<span class="badge revoked">revoked</span>{% else %}<span class="badge ok">active</span>{% endif %}</td>
+    <td>
+      {% if not k.revoked_at %}
+      <form method="post" action="/admin/access/action" class="inline">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="revoke-key">
+        <input type="hidden" name="key_id" value="{{ k.id }}">
+        <button class="button small danger" type="submit">Revoke</button>
+      </form>
+      {% else %}
+      <form method="post" action="/admin/access/action" class="inline" onsubmit="return confirm('Permanently delete this revoked key? This cannot be undone.')">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="delete-key">
+        <input type="hidden" name="key_id" value="{{ k.id }}">
+        <button class="button small danger" type="submit">Delete permanently</button>
+      </form>
+      {% endif %}
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="8" class="mut">No API keys.</td></tr>
+  {% endfor %}
+</table>
+
+<h2>OAuth clients <span class="mut">(MCP apps)</span></h2>
+<table>
+  <tr><th>Name</th><th>Client id</th><th>Origin</th><th>Last used</th><th>Status</th><th></th></tr>
+  {% for c in clients %}
+  <tr>
+    <td>{{ c.client_name ?: '—' }}</td>
+    <td class="mono mut">{{ c.client_id }}</td>
+    <td class="mut">{{ c.is_dynamic ? 'dynamic (DCR)' : 'admin-created' }}</td>
+    <td class="mut">{{ c.last_used_at ?: 'never' }}</td>
+    <td>{% if c.revoked_at %}<span class="badge revoked">disabled</span>{% else %}<span class="badge ok">active</span>{% endif %}</td>
+    <td>
+      {% if not c.revoked_at %}
+      <form method="post" action="/admin/access/action" class="inline">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="revoke-client">
+        <input type="hidden" name="client_id" value="{{ c.client_id }}">
+        <button class="button small danger" type="submit">Disable</button>
+      </form>
+      {% else %}
+      <form method="post" action="/admin/access/action" class="inline" onsubmit="return confirm('Permanently delete this disabled client and its token history?')">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="delete-client">
+        <input type="hidden" name="client_id" value="{{ c.client_id }}">
+        <button class="button small danger" type="submit">Delete permanently</button>
+      </form>
+      {% endif %}
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="mut">No OAuth clients registered.</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Active grants</h2>
+<table>
+  <tr><th>User</th><th>App</th><th>Tokens</th><th>Latest</th><th></th></tr>
+  {% for g in grants %}
+  <tr>
+    <td class="mut">{{ g.email }}</td>
+    <td>{{ g.client_name ?: g.client_id }}</td>
+    <td>{{ g.tokens }}</td>
+    <td class="mut">{{ g.latest }}</td>
+    <td>
+      <div style="display:flex;gap:.5rem;justify-content:flex-end">
+        <form method="post" action="/admin/access/action" class="inline">
+          <input type="hidden" name="_csrf" value="{{ csrf }}">
+          <input type="hidden" name="action" value="revoke-grant">
+          <input type="hidden" name="client_id" value="{{ g.client_id }}">
+          <input type="hidden" name="email" value="{{ g.email }}">
+          <button class="button small ghost" type="submit">Revoke</button>
+        </form>
+        <form method="post" action="/admin/access/action" class="inline" onsubmit="return confirm('Permanently delete this grant (all its tokens)?')">
+          <input type="hidden" name="_csrf" value="{{ csrf }}">
+          <input type="hidden" name="action" value="delete-grant">
+          <input type="hidden" name="client_id" value="{{ g.client_id }}">
+          <input type="hidden" name="email" value="{{ g.email }}">
+          <button class="button small danger" type="submit">Delete</button>
+        </form>
+      </div>
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5" class="mut">No active grants.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

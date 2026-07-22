@@ -1,0 +1,52 @@
+{
+    "name": "sitepoint/fastsite",
+    "description": "Ultra-lean static publishing engine: content in via API/webhook/MCP, static sites out via git + Cloudflare Pages.",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": "^8.3",
+        "ext-fileinfo": "*",
+        "ext-intl": "*",
+        "ext-mbstring": "*",
+        "ext-openssl": "*",
+        "ext-pdo_sqlite": "*",
+        "ext-sqlite3": "*",
+        "doctrine/dbal": "^4.0",
+        "matthiasmullie/minify": "^1.3",
+        "monolog/monolog": "^3.5",
+        "nikic/fast-route": "^1.3",
+        "nyholm/psr7": "^1.8",
+        "nyholm/psr7-server": "^1.1",
+        "php-di/php-di": "^7.0",
+        "predis/predis": "^2.2",
+        "psr/http-server-handler": "^1.0",
+        "psr/http-server-middleware": "^1.0",
+        "ramsey/uuid": "^4.7",
+        "symfony/html-sanitizer": "^7.0",
+        "symfony/process": "^7.0",
+        "twig/twig": "^3.10",
+        "vlucas/phpdotenv": "^5.6"
+    },
+    "require-dev": {
+        "phpstan/phpstan": "^1.11",
+        "phpunit/phpunit": "^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Fastsite\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Fastsite\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "optimize-autoloader": true
+    },
+    "scripts": {
+        "test": "phpunit",
+        "stan": "phpstan analyse src --level=8"
+    }
+}

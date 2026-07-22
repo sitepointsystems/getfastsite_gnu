@@ -1,0 +1,15 @@
+# Normalize line endings; pin LF where CRLF breaks execution
+# (dev machine is Windows with core.autocrlf=true, prod is alpine).
+* text=auto
+
+*.sh text eol=lf
+bin/fastsite text eol=lf
+docker/** text eol=lf
+*.twig text eol=lf
+
+*.png binary
+*.jpg binary
+*.webp binary
+*.avif binary
+*.woff2 binary
+*.ico binary

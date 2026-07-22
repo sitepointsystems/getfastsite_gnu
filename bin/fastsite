@@ -1,0 +1,691 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * fastsite CLI — single entrypoint for every operational command
+ * (conzent bin/oci pattern). Run without arguments for usage.
+ */
+
+use Fastsite\Build\Service\BuildService;
+use Fastsite\Content\Service\ContentService;
+use Fastsite\Identity\Service\UserService;
+use Fastsite\Kernel\Application;
+use Fastsite\Ops\DoctorService;
+use Fastsite\Publish\Service\GitPublisher;
+use Fastsite\Shared\Database\Migrator;
+use Fastsite\Shared\Database\SiteDatabaseManager;
+use Fastsite\Shared\Queue\JobQueue;
+use Fastsite\Shared\Queue\JobRunner;
+use Fastsite\Shared\Queue\Scheduler;
+use Fastsite\Site\Repository\SiteRepository;
+use Fastsite\Site\Service\SiteService;
+
+require \dirname(__DIR__) . '/vendor/autoload.php';
+
+/**
+ * @return array{string, list<string>, array<string, string|true>}
+ */
+function fastsite_parse_argv(array $argv): array
+{
+    array_shift($argv);
+    $command = $argv !== [] ? array_shift($argv) : 'help';
+    $args = [];
+    $opts = [];
+
+    foreach ($argv as $token) {
+        if (str_starts_with($token, '--')) {
+            $eq = strpos($token, '=');
+            if ($eq === false) {
+                $opts[substr($token, 2)] = true;
+            } else {
+                $opts[substr($token, 2, $eq - 2)] = substr($token, $eq + 1);
+            }
+        } else {
+            $args[] = $token;
+        }
+    }
+
+    return [$command, $args, $opts];
+}
+
+function fastsite_out(string $line = ''): void
+{
+    fwrite(STDOUT, $line . PHP_EOL);
+}
+
+function fastsite_fail(string $message): never
+{
+    fwrite(STDERR, 'error: ' . $message . PHP_EOL);
+    exit(1);
+}
+
+[$command, $args, $opts] = fastsite_parse_argv($argv);
+
+$app = Application::boot();
+$container = $app->container();
+$config = $app->config();
+
+$requireSite = static function (string $handle) use ($container): Fastsite\Site\Dto\Site {
+    $site = $container->get(SiteRepository::class)->findByHandle($handle);
+    if ($site === null) {
+        fastsite_fail(sprintf('unknown site "%s" — see site:list', $handle));
+    }
+
+    return $site;
+};
+
+try {
+    switch ($command) {
+        case 'install':
+            $migrator = $container->get(Migrator::class);
+            $databases = $container->get(SiteDatabaseManager::class);
+            $applied = $migrator->migrate($databases->engine(), $config['app.root'] . '/migrations/engine');
+            fastsite_out(sprintf('engine.db: %d migration(s) applied.', \count($applied)));
+
+            if (($config['app.secret'] ?? '') === '') {
+                fastsite_out('WARNING: APP_SECRET is empty — set it in .env before storing any secrets.');
+            }
+
+            $users = $container->get(UserService::class);
+            if ($users->hasAdmin()) {
+                fastsite_out('Admin user already exists — nothing else to do.');
+                break;
+            }
+
+            $email = (string) ($opts['email'] ?? '');
+            $password = (string) ($opts['password'] ?? '');
+            if ($email === '' || $password === '') {
+                fastsite_fail('first run needs --email= and --password= (12+ chars) to create the admin user');
+            }
+            $id = $users->createUser($email, $password, (string) ($opts['name'] ?? 'Admin'), 'admin');
+            fastsite_out(sprintf('Admin user #%d created (%s).', $id, $email));
+            break;
+
+        case 'migrate':
+            $migrator = $container->get(Migrator::class);
+            $databases = $container->get(SiteDatabaseManager::class);
+            $applied = $migrator->migrate($databases->engine(), $config['app.root'] . '/migrations/engine');
+            fastsite_out(sprintf('engine.db: %d applied.', \count($applied)));
+
+            foreach ($container->get(SiteService::class)->migrateAll() as $handle => $versions) {
+                fastsite_out(sprintf('%s: %d applied.', $handle, \count($versions)));
+            }
+            break;
+
+        case 'site:create':
+            $handle = $args[0] ?? fastsite_fail('usage: site:create <handle> --name= [--url=] [--repo=] [--locale=]');
+            $site = $container->get(SiteService::class)->create(
+                $handle,
+                (string) ($opts['name'] ?? $handle),
+                (string) ($opts['url'] ?? ''),
+                (string) ($opts['repo'] ?? ''),
+                (string) ($opts['locale'] ?? 'en'),
+            );
+            fastsite_out(sprintf('Site "%s" created (id %d). Shell scaffolded, DB migrated.', $site->handle, $site->id));
+            break;
+
+        case 'site:list':
+            $sites = $container->get(SiteRepository::class)->all();
+            if ($sites === []) {
+                fastsite_out('No sites yet — site:create <handle> --name="..."');
+                break;
+            }
+            foreach ($sites as $site) {
+                fastsite_out(sprintf(
+                    '%-20s %-30s %-10s %s',
+                    $site->handle,
+                    $site->name,
+                    $site->status,
+                    $site->baseUrl !== '' ? $site->baseUrl : '(no url)',
+                ));
+            }
+            break;
+
+        case 'site:migrate':
+            $only = $args[0] ?? null;
+            foreach ($container->get(SiteService::class)->migrateAll($only) as $handle => $versions) {
+                fastsite_out(sprintf('%s: %d applied.', $handle, \count($versions)));
+            }
+            break;
+
+        case 'site:seed-getfastsite':
+            // Dogfood: stand up getfastsite.com (the marketing site) inside the
+            // engine — create the site, install the shell-marketing theme,
+            // author the marketing pages + launch post, and build. Idempotent.
+            // --no-build skips the final build (author content only).
+            foreach ($container->get(Fastsite\Site\Service\MarketingSeeder::class)->seed(!isset($opts['no-build'])) as $line) {
+                fastsite_out($line);
+            }
+            break;
+
+        case 'content:create':
+            $handle = $args[0] ?? fastsite_fail('usage: content:create <site> --title= [--type=post] [--status=draft] [--body=|--body-file=] ...');
+            $site = $requireSite($handle);
+
+            $body = (string) ($opts['body'] ?? '');
+            if (isset($opts['body-file'])) {
+                $file = (string) $opts['body-file'];
+                if (!is_file($file)) {
+                    fastsite_fail('body file not found: ' . $file);
+                }
+                $body = (string) file_get_contents($file);
+            }
+
+            $content = $container->get(ContentService::class)->create($site, [
+                'type' => (string) ($opts['type'] ?? 'post'),
+                'title' => (string) ($opts['title'] ?? ''),
+                'excerpt' => (string) ($opts['excerpt'] ?? ''),
+                'body_html' => $body,
+                'status' => (string) ($opts['status'] ?? 'draft'),
+                'scheduled_at' => (string) ($opts['scheduled-at'] ?? ''),
+                'slug' => (string) ($opts['slug'] ?? ''),
+                'author_name' => (string) ($opts['author'] ?? ''),
+                'seo_title' => (string) ($opts['seo-title'] ?? ''),
+                'seo_description' => (string) ($opts['seo-description'] ?? ''),
+            ]);
+
+            fastsite_out(sprintf('%s #%d "%s" (%s) → %s', $content->type, $content->id, $content->title, $content->status, $content->slug));
+            foreach ($content->warnings as $warning) {
+                fastsite_out('  WARN ' . $warning);
+            }
+            break;
+
+        case 'content:fact-check':
+            $handle = $args[0] ?? fastsite_fail('usage: content:fact-check <site> <content-id>');
+            $id = (int) ($args[1] ?? fastsite_fail('usage: content:fact-check <site> <content-id>'));
+            $site = $requireSite($handle);
+            $report = $container->get(Fastsite\FactCheck\FactCheckService::class)->checkContent($site, $id);
+            fastsite_out((string) ($report['summary'] ?? ''));
+            foreach (($report['claims'] ?? []) as $c) {
+                fastsite_out(sprintf('  [%s] %s', strtoupper((string) ($c['verdict'] ?? '?')), (string) ($c['claim'] ?? '')));
+                if (($c['note'] ?? '') !== '') {
+                    fastsite_out('    → ' . $c['note']);
+                }
+                foreach (($c['sources'] ?? []) as $src) {
+                    fastsite_out('    ' . $src);
+                }
+            }
+            break;
+
+        case 'build':
+            $handle = $args[0] ?? fastsite_fail('usage: build <site>');
+            $stats = $container->get(BuildService::class)->build($requireSite($handle));
+            fastsite_out(sprintf(
+                'Built %d page(s): %d written, %d unchanged, %d removed — %s KB in %s ms → %s',
+                $stats->pages,
+                $stats->written,
+                $stats->skipped,
+                $stats->deleted,
+                number_format($stats->bytes / 1024, 1),
+                $stats->durationMs,
+                $stats->outputDir,
+            ));
+            break;
+
+        case 'preview':
+            $handle = $args[0] ?? fastsite_fail('usage: preview <site>');
+            $dir = $container->get(BuildService::class)->buildPreview($requireSite($handle));
+            fastsite_out('Preview built with relative paths → ' . $dir . ' — serve it statically or open index.html directly (no deploy).');
+            break;
+
+        case 'publish':
+            $handle = $args[0] ?? fastsite_fail('usage: publish <site> [--message=] [--sync]');
+            $site = $requireSite($handle);
+            $message = (string) ($opts['message'] ?? 'publish: full build');
+
+            if (!isset($opts['sync'])) {
+                $uuid = $container->get(Fastsite\Build\Service\PublishTrigger::class)->trigger($site, $message, 'cli');
+                $verb = $site->locales !== [] ? 'translate → build → publish' : 'build → publish';
+                fastsite_out('Queued ' . $verb . ' chain (job ' . $uuid . '). Run queue:work if no worker is up.');
+                break;
+            }
+
+            $container->get(BuildService::class)->build($site);
+            $result = $container->get(GitPublisher::class)->publish($site, $message);
+            if (!$result['committed']) {
+                fastsite_out('Nothing changed — no commit.' . ($result['pushed'] ? ' Remote synced.' : ''));
+            } else {
+                fastsite_out(sprintf(
+                    'Committed %s%s.',
+                    $result['commit'],
+                    $result['pushed'] ? ' and pushed to origin' : ' (no remote configured — commit is local)',
+                ));
+            }
+            break;
+
+        case 'queue:work':
+            $runner = $container->get(JobRunner::class);
+            $maxRuntime = isset($opts['max-runtime']) ? (int) $opts['max-runtime'] : null;
+            fastsite_out('Worker started (BRPOP high/default/low, stale sweep every 5 min). Ctrl+C to stop.');
+            $processed = $runner->work($maxRuntime, isset($opts['once']));
+            fastsite_out('Worker stopped after ' . $processed . ' job(s).');
+            break;
+
+        case 'schedule:run':
+            fastsite_out(isset($opts['once']) ? 'Scheduler tick…' : 'Scheduler loop started (60s ticks). Ctrl+C to stop.');
+            $container->get(Scheduler::class)->run(isset($opts['once']));
+            break;
+
+        case 'jobs:list':
+            $status = (string) ($opts['status'] ?? '');
+            $sql = 'SELECT uuid, type, queue, site_handle, status, attempts, error, created_at FROM jobs';
+            $params = [];
+            if ($status !== '') {
+                $sql .= ' WHERE status = ?';
+                $params[] = $status;
+            }
+            $sql .= ' ORDER BY id DESC LIMIT ' . max(1, (int) ($opts['limit'] ?? 20));
+            $rows = $container->get(SiteDatabaseManager::class)->engine()->fetchAllAssociative($sql, $params);
+            if ($rows === []) {
+                fastsite_out('No jobs.');
+                break;
+            }
+            foreach ($rows as $row) {
+                fastsite_out(sprintf(
+                    '%-36s %-14s %-8s %-12s %-8s a%d %s%s',
+                    $row['uuid'],
+                    $row['type'],
+                    $row['queue'],
+                    $row['site_handle'] ?? '-',
+                    $row['status'],
+                    $row['attempts'],
+                    $row['created_at'],
+                    $row['error'] !== null ? '  ERR: ' . mb_substr((string) $row['error'], 0, 60) : '',
+                ));
+            }
+            break;
+
+        case 'jobs:retry':
+            $uuid = $args[0] ?? fastsite_fail('usage: jobs:retry <uuid>');
+            $db = $container->get(SiteDatabaseManager::class)->engine();
+
+            $row = $db->fetchAssociative('SELECT status, dedupe_key FROM jobs WHERE uuid = ?', [$uuid]);
+            if ($row === false || !\in_array($row['status'], ['dead', 'failed'], true)) {
+                fastsite_fail('job not found or not dead/failed: ' . $uuid);
+            }
+            if ($row['dedupe_key'] !== null) {
+                $twin = $db->fetchOne(
+                    "SELECT uuid FROM jobs WHERE dedupe_key = ? AND status = 'pending' AND uuid != ?",
+                    [$row['dedupe_key'], $uuid],
+                );
+                if ($twin !== false) {
+                    fastsite_fail(sprintf('not retried: pending job %s with the same dedupe key supersedes this one', (string) $twin));
+                }
+            }
+
+            $db->executeStatement(
+                "UPDATE jobs SET status = 'pending', attempts = 0, run_after = NULL, error = NULL WHERE uuid = ?",
+                [$uuid],
+            );
+            $container->get(JobQueue::class)->pushExisting($uuid);
+            fastsite_out('Job requeued: ' . $uuid);
+            break;
+
+        case 'key:create':
+            $email = $args[0] ?? fastsite_fail('usage: key:create <user-email> --name= --scopes=a,b [--sites=x,y|*]');
+            $db = $container->get(SiteDatabaseManager::class)->engine();
+            $userId = $db->fetchOne('SELECT id FROM users WHERE email = ? AND deleted_at IS NULL', [mb_strtolower($email)]);
+            if ($userId === false) {
+                fastsite_fail('no user with email ' . $email);
+            }
+            $scopes = array_values(array_filter(array_map('trim', explode(',', (string) ($opts['scopes'] ?? '')))));
+            $sites = array_values(array_filter(array_map('trim', explode(',', (string) ($opts['sites'] ?? '*')))));
+            $key = $container->get(Fastsite\Access\Service\ApiKeyService::class)->create(
+                (int) $userId,
+                (string) ($opts['name'] ?? 'cli'),
+                $scopes,
+                $sites,
+            );
+            fastsite_out('API key created (id ' . $key['id'] . '). Shown ONCE — store it now:');
+            fastsite_out('');
+            fastsite_out('  ' . $key['token']);
+            break;
+
+        case 'key:list':
+            $rows = $container->get(SiteDatabaseManager::class)->engine()->fetchAllAssociative(
+                'SELECT k.id, k.name, k.key_id, k.scopes, k.sites, k.last_used_at, k.revoked_at, u.email
+                 FROM api_keys k JOIN users u ON u.id = k.user_id ORDER BY k.id DESC LIMIT 50',
+            );
+            if ($rows === []) {
+                fastsite_out('No API keys.');
+                break;
+            }
+            foreach ($rows as $row) {
+                fastsite_out(sprintf(
+                    '#%-4d %-16s fs_%s_*  %-24s %s %s  %s',
+                    $row['id'],
+                    $row['name'],
+                    $row['key_id'],
+                    $row['email'],
+                    $row['scopes'],
+                    $row['sites'],
+                    $row['revoked_at'] !== null ? 'REVOKED' : ($row['last_used_at'] !== null ? 'used ' . $row['last_used_at'] : 'never used'),
+                ));
+            }
+            break;
+
+        case 'key:rotate':
+            $id = (int) ($args[0] ?? fastsite_fail('usage: key:rotate <id>'));
+            $key = $container->get(Fastsite\Access\Service\ApiKeyService::class)->rotate($id);
+            fastsite_out('Rotated. New token (shown ONCE):');
+            fastsite_out('');
+            fastsite_out('  ' . $key['token']);
+            break;
+
+        case 'key:revoke':
+            $id = (int) ($args[0] ?? fastsite_fail('usage: key:revoke <id>'));
+            $container->get(Fastsite\Access\Service\ApiKeyService::class)->revoke($id);
+            fastsite_out('Key #' . $id . ' revoked (effective immediately).');
+            break;
+
+        case 'webhook:create':
+            $slug = $args[0] ?? fastsite_fail('usage: webhook:create <slug> --site= [--mapper=autoseo]');
+            $siteHandle = (string) ($opts['site'] ?? '');
+            if ($siteHandle === '') {
+                fastsite_fail('--site= is required');
+            }
+            $requireSite($siteHandle);
+            $mapper = (string) ($opts['mapper'] ?? 'autoseo');
+            if (!$container->get(Fastsite\Webhook\Mapper\WebhookMapperRegistry::class)->has($mapper)) {
+                fastsite_fail('unknown mapper: ' . $mapper . ' (available: ' . implode(', ', $container->get(Fastsite\Webhook\Mapper\WebhookMapperRegistry::class)->keys()) . ')');
+            }
+            $result = $container->get(Fastsite\Webhook\Service\WebhookService::class)->createIntegration($slug, $siteHandle, $mapper);
+            fastsite_out('Webhook integration created (id ' . $result['id'] . ').');
+            fastsite_out('  URL:    ' . rtrim($config['app.url'], '/') . '/webhooks/' . $result['slug']);
+            fastsite_out('  Secret (shown ONCE — configure it on the sender):');
+            fastsite_out('    ' . $result['secret']);
+            fastsite_out('  Sign requests: X-Fastsite-Signature: t=<unix>,v1=hmac_sha256("<t>.<body>", secret)');
+            fastsite_out('  Also send: X-Delivery-Id: <unique-per-delivery>');
+            break;
+
+        case 'webhook:list':
+            $rows = $container->get(SiteDatabaseManager::class)->engine()->fetchAllAssociative(
+                'SELECT id, slug, site_handle, mapper, active FROM webhook_integrations ORDER BY id',
+            );
+            if ($rows === []) {
+                fastsite_out('No webhook integrations.');
+                break;
+            }
+            foreach ($rows as $row) {
+                fastsite_out(sprintf('#%-3d %-20s site=%-16s mapper=%-10s %s', $row['id'], $row['slug'], $row['site_handle'], $row['mapper'], (int) $row['active'] === 1 ? 'active' : 'disabled'));
+            }
+            break;
+
+        case 'webhook:deliveries':
+            $rows = $container->get(SiteDatabaseManager::class)->engine()->fetchAllAssociative(
+                'SELECT d.id, i.slug, d.delivery_uuid, d.status, d.result, d.error, d.created_at
+                 FROM webhook_deliveries d JOIN webhook_integrations i ON i.id = d.integration_id
+                 ORDER BY d.id DESC LIMIT ' . max(1, (int) ($opts['limit'] ?? 20)),
+            );
+            if ($rows === []) {
+                fastsite_out('No deliveries.');
+                break;
+            }
+            foreach ($rows as $row) {
+                fastsite_out(sprintf('#%-4d %-16s %-12s %-10s %s%s', $row['id'], $row['slug'], $row['delivery_uuid'], $row['status'], $row['result'] ?: '', $row['error'] !== null ? '  ERR: ' . $row['error'] : ''));
+            }
+            break;
+
+        case 'webhook:replay':
+            $deliveryId = (int) ($args[0] ?? fastsite_fail('usage: webhook:replay <delivery-id>'));
+            $delivery = $container->get(Fastsite\Webhook\Service\WebhookService::class)->findDelivery($deliveryId);
+            if ($delivery === null) {
+                fastsite_fail('delivery not found: ' . $deliveryId);
+            }
+            $uuid = $container->get(JobQueue::class)->enqueue(
+                type: 'process_webhook',
+                siteHandle: $delivery['site_handle'],
+                payload: ['delivery_id' => $deliveryId],
+                queue: 'default',
+            );
+            fastsite_out('Requeued delivery #' . $deliveryId . ' (job ' . $uuid . ').');
+            break;
+
+        case 'site:add-language':
+            $handle = $args[0] ?? fastsite_fail('usage: site:add-language <site> <locale>');
+            $locale = $args[1] ?? fastsite_fail('usage: site:add-language <site> <locale>');
+            $requireSite($handle);
+            $locales = $container->get(SiteService::class)->addLocale($handle, $locale);
+            fastsite_out('Locales for ' . $handle . ': ' . implode(', ', $locales));
+            $uuid = $container->get(JobQueue::class)->enqueue(
+                type: 'translate_content',
+                siteHandle: $handle,
+                payload: ['trigger' => 'add-language'],
+                queue: 'default',
+                dedupeKey: 'translate:' . $handle,
+            );
+            fastsite_out('Queued translation (job ' . $uuid . ').');
+            break;
+
+        case 'site:remove-language':
+            $handle = $args[0] ?? fastsite_fail('usage: site:remove-language <site> <locale>');
+            $locale = $args[1] ?? fastsite_fail('usage: site:remove-language <site> <locale>');
+            $site = $requireSite($handle);
+            $locales = $container->get(SiteService::class)->removeLocale($handle, $locale);
+            fastsite_out('Locales for ' . $handle . ': ' . (implode(', ', $locales) ?: 'primary only'));
+            $container->get(Fastsite\Build\Service\PublishTrigger::class)->trigger($site, 'publish: language removed (cli)', 'cli');
+            fastsite_out('Rebuild + publish queued.');
+            break;
+
+        case 'translate':
+            $handle = $args[0] ?? fastsite_fail('usage: translate <site>');
+            $requireSite($handle);
+            $uuid = $container->get(JobQueue::class)->enqueue(
+                type: 'translate_content',
+                siteHandle: $handle,
+                payload: ['trigger' => 'cli'],
+                queue: 'default',
+                dedupeKey: 'translate:' . $handle,
+            );
+            fastsite_out('Queued translation (job ' . $uuid . ').');
+            break;
+
+        case 'shell:list':
+            $site = $requireSite($args[0] ?? fastsite_fail('usage: shell:list <site>'));
+            foreach ($container->get(Fastsite\Shell\Service\ShellService::class)->listFiles($site) as $f) {
+                fastsite_out(sprintf('%-48s %8d  %s', $f['path'], $f['size_bytes'], substr($f['sha256'], 0, 12)));
+            }
+            break;
+
+        case 'shell:snapshot':
+            $site = $requireSite($args[0] ?? fastsite_fail('usage: shell:snapshot <site> [--note=]'));
+            $rev = $container->get(Fastsite\Shell\Service\ShellService::class)->snapshot($site, (string) ($opts['note'] ?? 'cli snapshot'), 'cli');
+            fastsite_out('Shell snapshot created: revision ' . $rev);
+            break;
+
+        case 'shell:restore':
+            $site = $requireSite($args[0] ?? fastsite_fail('usage: shell:restore <site> <rev>'));
+            $rev = (int) ($args[1] ?? fastsite_fail('usage: shell:restore <site> <rev>'));
+            $container->get(Fastsite\Shell\Service\ShellService::class)->restore($site, $rev, 'cli');
+            fastsite_out('Shell restored to revision ' . $rev . ' (rebuild queued).');
+            break;
+
+        case 'backup:site':
+            $site = $requireSite($args[0] ?? fastsite_fail('usage: backup:site <site> [--kind=full|db|media|shell] [--sync]'));
+            $kind = (string) ($opts['kind'] ?? 'full');
+            if (!\in_array($kind, ['full', 'db', 'media', 'shell'], true)) {
+                fastsite_fail('--kind must be full|db|media|shell');
+            }
+            if (isset($opts['sync'])) {
+                $backups = $container->get(Fastsite\Backup\Service\BackupService::class);
+                // Same per-site mutex the queued handlers take — a sync
+                // snapshot must not overlap a running build/restore.
+                try {
+                    $records = $container->get(Fastsite\Shared\Queue\SiteLock::class)->withLock($site->handle, static fn (): array => match ($kind) {
+                        'db' => [$backups->backupSiteDb($site, 'cli')],
+                        'media' => array_filter([$backups->backupSiteMedia($site, 'cli')]),
+                        'shell' => array_filter([$backups->backupSiteShell($site, 'cli')]),
+                        default => $backups->backupSite($site, 'cli'),
+                    });
+                } catch (Fastsite\Shared\Queue\LockBusyException) {
+                    fastsite_fail('site "' . $site->handle . '" is locked by a running job (build/backup/restore) — wait or use the queued form.');
+                }
+                foreach ($records as $r) {
+                    fastsite_out(sprintf('  %-6s %s (%s KB)', $r['kind'], $r['storage_key'], number_format($r['size_bytes'] / 1024, 1)));
+                }
+                fastsite_out('Backup complete.');
+                break;
+            }
+            $uuid = $container->get(JobQueue::class)->enqueue(
+                type: 'backup_site',
+                siteHandle: $site->handle,
+                payload: ['trigger' => 'cli', 'kind' => $kind],
+                queue: 'low',
+                dedupeKey: 'backup:' . $kind . ':' . $site->handle,
+            );
+            fastsite_out('Queued ' . $kind . ' backup of ' . $site->handle . ' (job ' . $uuid . ').');
+            break;
+
+        case 'backup:engine':
+            if (isset($opts['sync'])) {
+                $r = $container->get(Fastsite\Backup\Service\BackupService::class)->backupEngine('cli');
+                fastsite_out(sprintf('engine.db backed up: %s (%s KB)', $r['storage_key'], number_format($r['size_bytes'] / 1024, 1)));
+                break;
+            }
+            $uuid = $container->get(JobQueue::class)->enqueue(
+                type: 'backup_engine',
+                payload: ['trigger' => 'cli'],
+                queue: 'low',
+                dedupeKey: 'backup:engine',
+            );
+            fastsite_out('Queued engine backup (job ' . $uuid . ').');
+            break;
+
+        case 'backup:list':
+            $onlySite = $args[0] ?? null;
+            $rows = $container->get(Fastsite\Backup\Service\BackupService::class)->list($onlySite, (int) ($opts['limit'] ?? 50));
+            if ($rows === []) {
+                fastsite_out('No backups recorded.');
+                break;
+            }
+            foreach ($rows as $row) {
+                fastsite_out(sprintf(
+                    '#%-4d %-6s %-16s %-6s %10s KB  %-9s %s',
+                    $row['id'],
+                    $row['scope'],
+                    $row['site_handle'] ?? '-',
+                    $row['kind'],
+                    number_format((int) $row['size_bytes'] / 1024, 1),
+                    $row['trigger_source'],
+                    $row['created_at'],
+                ));
+            }
+            break;
+
+        case 'backup:prune':
+            $result = $container->get(Fastsite\Backup\Service\BackupService::class)->prune();
+            fastsite_out('Pruned ' . $result['deleted'] . ' old backup(s).');
+            break;
+
+        case 'restore:site':
+            $site = $requireSite($args[0] ?? fastsite_fail('usage: restore:site <site> [--db-key=] [--media-key=] [--media] [--sync]'));
+            $backups = $container->get(Fastsite\Backup\Service\BackupService::class);
+            if (isset($opts['sync'])) {
+                // The queued form serializes through SiteLock inside the
+                // handler — the sync form must take the SAME lock, or it
+                // could swap site.db out from under a running build.
+                try {
+                    $container->get(Fastsite\Shared\Queue\SiteLock::class)->withLock($site->handle, static function () use ($backups, $site, $opts): void {
+                        if (isset($opts['media']) || isset($opts['media-key'])) {
+                            $m = $backups->restoreSiteMedia($site, isset($opts['media-key']) ? (string) $opts['media-key'] : null);
+                            fastsite_out(sprintf('Media restored: %d written, %d already present.', $m['restored'], $m['skipped']));
+                        }
+                        $result = $backups->restoreSiteDb($site, isset($opts['db-key']) ? (string) $opts['db-key'] : null);
+                        fastsite_out('DB restored from ' . $result['restored_from'] . '.');
+                        fastsite_out('  Previous DB kept at: ' . ($result['preserved_as'] ?: '(none)'));
+                        fastsite_out('  Rebuild+publish queued (job ' . $result['rebuild_job'] . '). Run queue:work if no worker is up.');
+                    });
+                } catch (Fastsite\Shared\Queue\LockBusyException) {
+                    fastsite_fail('site "' . $site->handle . '" is locked by a running job (build/backup/restore) — wait or use the queued form.');
+                }
+                break;
+            }
+            $payload = ['trigger' => 'cli'];
+            if (isset($opts['db-key'])) {
+                $payload['db_key'] = (string) $opts['db-key'];
+            }
+            if (isset($opts['media-key'])) {
+                $payload['media_key'] = (string) $opts['media-key'];
+            } elseif (isset($opts['media'])) {
+                $payload['media'] = true;
+            }
+            $uuid = $container->get(JobQueue::class)->enqueue(
+                type: 'restore_site',
+                siteHandle: $site->handle,
+                payload: $payload,
+                queue: 'high',
+            );
+            fastsite_out('Queued restore of ' . $site->handle . ' (job ' . $uuid . '). It rebuilds+publishes when done.');
+            break;
+
+        case 'restore:engine':
+            if (!isset($opts['yes'])) {
+                fastsite_fail('restore:engine replaces the live engine.db. Stop all workers/schedulers first, then re-run with --yes.');
+            }
+            $result = $container->get(Fastsite\Backup\Service\BackupService::class)->restoreEngine(
+                isset($opts['key']) ? (string) $opts['key'] : null,
+            );
+            fastsite_out('engine.db restored from ' . $result['restored_from'] . '.');
+            fastsite_out('  Previous DB kept at: ' . ($result['preserved_as'] ?: '(none)'));
+            fastsite_out('  Run `fastsite doctor` before restarting workers.');
+            break;
+
+        case 'doctor':
+            $checks = $container->get(DoctorService::class)->run();
+            $failed = false;
+            foreach ($checks as $check) {
+                if ($check['status'] === 'FAIL') {
+                    $failed = true;
+                }
+                fastsite_out(sprintf('[%-4s] %-22s %s', $check['status'], $check['name'], $check['detail']));
+            }
+            fastsite_out('');
+            fastsite_out($failed ? 'Verdict: something is broken — fix the FAILs above.' : 'Verdict: all good.');
+            if ($failed) {
+                exit(1);
+            }
+            break;
+
+        case 'version':
+            fastsite_out('fastsite 0.1.0 (M1)');
+            break;
+
+        case 'help':
+        default:
+            fastsite_out('fastsite — static publishing engine');
+            fastsite_out('');
+            fastsite_out('  install        --email= --password= [--name=]   first-run bootstrap (migrate + admin user)');
+            fastsite_out('  migrate                                         apply pending migrations (engine + all sites)');
+            fastsite_out('  site:create    <handle> --name= [--url=] [--repo=] [--locale=]');
+            fastsite_out('  site:list');
+            fastsite_out('  site:migrate   [handle]');
+            fastsite_out('  site:seed-getfastsite [--no-build]              dogfood: build getfastsite.com inside the engine');
+            fastsite_out('  content:create <site> --title= [--type=post|page] [--status=] [--body=|--body-file=]');
+            fastsite_out('                 [--excerpt=] [--slug=] [--author=] [--seo-title=] [--seo-description=]');
+            fastsite_out('                 [--scheduled-at=ISO8601]   (required when --status=scheduled)');
+            fastsite_out('  build          <site>                           full static build into build/');
+            fastsite_out('  publish        <site> [--message=] [--sync]     queue build+publish chain (--sync = inline)');
+            fastsite_out('  queue:work     [--once] [--max-runtime=SECONDS] the queue worker (one process only)');
+            fastsite_out('  schedule:run   [--once]                         minute loop: due content, delayed jobs, sweeps');
+            fastsite_out('  jobs:list      [--status=] [--limit=20]');
+            fastsite_out('  jobs:retry     <uuid>                           requeue a dead/failed job');
+            fastsite_out('  key:create     <user-email> --name= --scopes=content:write,publish [--sites=demo|*]');
+            fastsite_out('  key:list / key:rotate <id> / key:revoke <id>');
+            fastsite_out('  webhook:create <slug> --site= [--mapper=autoseo]   signed inbound webhook + secret');
+            fastsite_out('  webhook:list / webhook:deliveries [--limit=20] / webhook:replay <delivery-id>');
+            fastsite_out('  shell:list <site> / shell:snapshot <site> [--note=] / shell:restore <site> <rev>');
+            fastsite_out('  backup:site    <site> [--kind=full|db|media|shell] [--sync]   snapshot to R2 (or local)');
+            fastsite_out('  backup:engine  [--sync] / backup:list [site] / backup:prune');
+            fastsite_out('  restore:site   <site> [--db-key=] [--media] [--sync]   restore + rebuild + publish');
+            fastsite_out('  restore:engine --yes [--key=]                   disaster recovery (stop workers first)');
+            fastsite_out('  doctor                                          pipeline health with plain-English verdicts');
+            fastsite_out('  version');
+            break;
+    }
+} catch (\Throwable $e) {
+    fastsite_fail($e->getMessage());
+}
+
+exit(0);

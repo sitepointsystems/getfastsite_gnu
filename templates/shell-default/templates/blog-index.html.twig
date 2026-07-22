@@ -1,0 +1,23 @@
+{% extends 'base.html.twig' %}
+
+{% block main %}
+<section class="section">
+  <div class="wrap">
+    <h1>{{ t('blog') }}</h1>
+    {% if posts %}
+    <div class="cards">
+      {% for post in posts %}
+      <article class="card">
+        {% if post.featured_thumb %}<a class="card-media" href="{{ post.url }}">{{ post.featured_thumb|raw }}</a>{% endif %}
+        <h2><a href="{{ post.url }}">{{ post.title }}</a></h2>
+        {% if post.excerpt %}<p>{{ post.excerpt }}</p>{% endif %}
+        {% if post.published_at %}<time datetime="{{ post.published_at }}">{{ post.published_at|date('M j, Y') }}</time>{% endif %}
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p>{{ t('no_posts_yet') }}</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

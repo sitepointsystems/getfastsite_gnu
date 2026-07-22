@@ -1,0 +1,31 @@
+{% extends 'base.html.twig' %}
+
+{% block main %}
+{% if content and content.body_html %}
+{# A published page with slug "home" drives the root — render its body. #}
+{{ content.body_html|raw }}
+{% else %}
+<section class="hero">
+  <div class="wrap">
+    <h1>{{ site.name }}</h1>
+  </div>
+</section>
+{% endif %}
+
+{% if posts %}
+<section class="section">
+  <div class="wrap">
+    <h2>{{ t('latest_posts') }}</h2>
+    <div class="cards">
+      {% for post in posts %}
+      <article class="card">
+        <h3><a href="{{ post.url }}">{{ post.title }}</a></h3>
+        {% if post.excerpt %}<p>{{ post.excerpt }}</p>{% endif %}
+        {% if post.published_at %}<time datetime="{{ post.published_at }}">{{ post.published_at|date('M j, Y') }}</time>{% endif %}
+      </article>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

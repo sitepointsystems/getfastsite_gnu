@@ -1,0 +1,9 @@
+/vendor/
+/var/
+/.env
+/node_modules/
+composer.phar
+.phpunit.result.cache
+/.phpunit.cache/
+/dist/
+*.local.php

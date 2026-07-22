@@ -1,0 +1,25 @@
+{% extends 'layout.html.twig' %}
+
+{% block body %}
+<h1>Authorize access</h1>
+<p class="sub">Signed in as <strong>{{ user_email }}</strong></p>
+
+<div class="client">
+  <span class="dot"></span>
+  <div><div class="name">{{ client_name }}</div><div style="color:var(--text-2);font-size:.85rem">wants access to your fastsite account</div></div>
+</div>
+
+<p class="sub">This will allow it to:</p>
+<ul class="scopes">
+  {% for scope in scope_descriptions %}
+  <li><span class="scope-name">{{ scope }}</span></li>
+  {% endfor %}
+</ul>
+
+<form method="post" action="/oauth/authorize">
+  <input type="hidden" name="authorize_params" value="{{ authorize_params }}">
+  <button type="submit" name="decision" value="approve" class="button">Approve</button>
+  <button type="submit" name="decision" value="deny" class="button secondary">Deny</button>
+</form>
+<p class="foot">You can revoke this access anytime from your account settings.</p>
+{% endblock %}

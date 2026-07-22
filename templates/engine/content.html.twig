@@ -1,0 +1,671 @@
+{% extends 'dash-layout.html.twig' %}
+
+{% block body %}
+<style>
+  /* Content action bar: equal-height, high-contrast buttons (#6). */
+  .content-actions{display:flex;align-items:center;gap:.5rem;margin:0}
+  .content-actions form{display:inline-flex;margin:0}
+  .content-actions .button{min-height:36px;display:inline-flex;align-items:center;justify-content:center}
+  /* A second solid accent for "Build & publish" — strong text contrast. */
+  .button.solid2{background:var(--ok);color:#04121a;border-color:var(--ok);font-weight:600}
+  .button.solid2:hover{filter:brightness(1.08)}
+  .linkbtn{background:none;border:0;padding:0;margin:0;font:inherit;color:var(--accent);cursor:pointer;text-decoration:underline}
+  .linkbtn.danger{color:var(--danger)}
+  /* Self-contained WYSIWYG (#14) — dashboard-only JS; published sites stay zero-JS.
+     Progressive enhancement: the textarea is the canonical body_html field and
+     works with JS disabled; the editor layers on top. */
+  .wysiwyg{border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--bg-2)}
+  .wy-toolbar{display:flex;flex-wrap:wrap;gap:.25rem;align-items:center;padding:.4rem .5rem;border-bottom:1px solid var(--border);background:var(--surface)}
+  .wy-toolbar button{background:var(--bg-2);color:var(--text-2);border:1px solid var(--border);border-radius:6px;min-width:30px;height:28px;padding:0 .45rem;font-size:.8rem;cursor:pointer;line-height:1}
+  .wy-toolbar button:hover{color:var(--text);border-color:var(--accent)}
+  .wy-toolbar button.on{color:var(--text);border-color:var(--accent);background:rgba(42,134,255,.14)}
+  .wy-toolbar .wy-sep{width:1px;height:20px;background:var(--border);margin:0 .2rem}
+  .wy-toolbar select.wy-comp{width:auto;min-width:12rem;padding:.25rem .5rem;font-size:.8rem;height:28px;margin:0}
+  /* The editable surface is an iframe so it loads the SITE's real CSS (isolated
+     from the dashboard chrome) — the layout in the editor matches the published
+     page. data-media-id images are shown via the thumbnail route. */
+  .wy-frame{display:block;width:100%;min-height:26rem;max-height:44rem;border:0;background:#0a0f1a}
+  .wysiwyg textarea.wy-source{border:0;border-radius:0;min-height:24rem}
+  /* Source split view: designer left, CodeMirror right; both stay live. */
+  .wysiwyg.split .wy-panes{display:grid;grid-template-columns:1fr 1fr}
+  .wysiwyg.split .wy-frame{height:36rem;max-height:none}
+  .wysiwyg .CodeMirror{display:none;background:var(--bg-2);color:var(--text);font-family:var(--mono);font-size:.83rem;line-height:1.5}
+  .wysiwyg.split .CodeMirror{display:block;height:36rem;border-left:1px solid var(--border)}
+  @media (max-width:1100px){
+    .wysiwyg.split .wy-panes{grid-template-columns:1fr}
+    .wysiwyg.split .wy-frame{height:22rem}
+    .wysiwyg.split .CodeMirror{height:22rem;border-left:0;border-top:1px solid var(--border)}
+  }
+  /* CodeMirror on the engine tokens — keep in sync with settings.html.twig's
+     #shell-editor block (same palette, different scope). */
+  .wysiwyg .CodeMirror-gutters{background:var(--bg-2);border-right:1px solid var(--border)}
+  .wysiwyg .CodeMirror-linenumber{color:var(--muted)}
+  .wysiwyg .CodeMirror-cursor{border-left:2px solid var(--accent)}
+  .wysiwyg .CodeMirror-selected,.wysiwyg .CodeMirror-focused .CodeMirror-selected{background:rgba(42,134,255,.25)}
+  .wysiwyg .CodeMirror-activeline-background{background:rgba(255,255,255,.045)}
+  .wysiwyg .CodeMirror-matchingbracket{color:var(--ok) !important;outline:1px solid rgba(6,214,160,.45)}
+  .wysiwyg .cm-comment{color:var(--muted);font-style:italic}
+  .wysiwyg .cm-tag{color:#5ccfe6}
+  .wysiwyg .cm-bracket{color:#9bb0c6}
+  .wysiwyg .cm-attribute{color:#ffd580}
+  .wysiwyg .cm-string,.wysiwyg .cm-string-2{color:#a8e07a}
+  .wysiwyg .cm-number,.wysiwyg .cm-atom{color:#f78c6c}
+  .wysiwyg .cm-keyword{color:#c792ea}
+  .wysiwyg .cm-variable{color:var(--text)}
+  .wysiwyg .cm-error{color:var(--danger)}
+</style>
+
+<h1>{{ site.name }}</h1>
+<p class="sub">Content — pure HTML bodies, images via <span class="mono">&lt;img data-media-id="N" alt="…"&gt;</span>.</p>
+{% include 'site-nav.html.twig' %}
+
+<div class="tabs">
+  <a href="?type=post{{ trash ? '&amp;trash=1' }}" class="{{ type == 'post' ? 'active' }}">Posts</a>
+  <a href="?type=page{{ trash ? '&amp;trash=1' }}" class="{{ type == 'page' ? 'active' }}">Pages</a>
+  <span style="flex:1"></span>
+  <div class="content-actions">
+    {% if trash %}
+      <a class="button small ghost" href="?type={{ type }}">← Back to {{ type }}s</a>
+    {% else %}
+      <a class="button small" href="?type={{ type }}&amp;new=1">New {{ type }}</a>
+      <form method="post" action="/sites/{{ site.handle }}/content/action">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="publish-site">
+        <button class="button small solid2" type="submit">Build &amp; publish</button>
+      </form>
+      <a class="button small ghost" href="?type={{ type }}&amp;trash=1">Trash</a>
+    {% endif %}
+  </div>
+</div>
+
+{% if creating or editing %}
+<div class="card">
+  <h2 style="margin-top:0">{{ editing ? 'Edit: ' ~ editing.title : 'New ' ~ type }}</h2>
+  <form method="post" action="/sites/{{ site.handle }}/content/action">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="action" value="save">
+    <input type="hidden" name="type" value="{{ editing ? editing.type : type }}">
+    {% if editing %}<input type="hidden" name="id" value="{{ editing.id }}">{% endif %}
+    <div class="row">
+      <div><label>Title</label><input type="text" name="title" value="{{ editing ? editing.title }}" required></div>
+      <div><label>Slug <span class="mut">(blank = from title)</span></label><input type="text" name="slug" value="{{ editing ? editing.slug }}"></div>
+    </div>
+    <label>Excerpt</label>
+    <input type="text" name="excerpt" value="{{ editing ? editing.excerpt }}">
+    <label>Body HTML</label>
+    <div class="wysiwyg" data-wysiwyg data-site="{{ site.handle }}">
+      <div class="wy-toolbar" hidden>
+        <button type="button" data-cmd="bold" title="Bold"><b>B</b></button>
+        <button type="button" data-cmd="italic" title="Italic"><i>I</i></button>
+        <button type="button" data-cmd="strikeThrough" title="Strikethrough"><s>S</s></button>
+        <span class="wy-sep"></span>
+        <button type="button" data-block="h2" title="Heading 2">H2</button>
+        <button type="button" data-block="h3" title="Heading 3">H3</button>
+        <button type="button" data-block="p" title="Paragraph">P</button>
+        <button type="button" data-block="blockquote" title="Quote">&#10077;</button>
+        <button type="button" data-block="pre" title="Code block">&lt;/&gt;</button>
+        <span class="wy-sep"></span>
+        <button type="button" data-cmd="insertUnorderedList" title="Bullet list">&bull; List</button>
+        <button type="button" data-cmd="insertOrderedList" title="Numbered list">1. List</button>
+        <span class="wy-sep"></span>
+        <button type="button" data-link title="Insert link">&#128279;</button>
+        <button type="button" data-cmd="unlink" title="Remove link">unlink</button>
+        <button type="button" data-img title="Insert image by media id">&#128247; img</button>
+        <button type="button" data-cmd="removeFormat" title="Clear formatting">clear</button>
+        {% if components|length %}
+        <span class="wy-sep"></span>
+        <select class="wy-comp" title="Insert a component placeholder">
+          <option value="">Insert component…</option>
+          {% for c in components %}<option value="{{ c.handle }}">{{ c.handle }}</option>{% endfor %}
+        </select>
+        {% endif %}
+        <span style="flex:1"></span>
+        <button type="button" data-source title="Edit the raw HTML">Source</button>
+      </div>
+      <div class="wy-panes">
+        <iframe class="wy-frame" title="Body editor" hidden></iframe>
+        <textarea name="body_html" class="code wy-source">{{ editing ? editing.bodyHtml }}</textarea>
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>Status</label>
+        <select name="status">
+          {% for s in ['draft', 'published', 'scheduled', 'archived'] %}
+            <option value="{{ s }}" {{ editing and editing.status == s ? 'selected' }}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div><label>Publish date/time <span class="mut">(UTC — the date shown on the post; with status “scheduled” it also auto-publishes then)</span></label><input type="datetime-local" name="scheduled_at" value="{{ editing ? (editing.scheduledAt ?: editing.publishedAt)|slice(0, 16) }}"></div>
+      <div><label>Author</label><input type="text" name="author_name" value="{{ editing ? editing.authorName }}"></div>
+    </div>
+    <div class="row">
+      <div><label>SEO title</label><input type="text" name="seo_title" value="{{ editing ? editing.seoTitle }}"></div>
+      <div><label>SEO description</label><input type="text" name="seo_description" value="{{ editing ? editing.seoDescription }}"></div>
+    </div>
+    <p style="margin:1.25rem 0 0">
+      <button class="button" type="submit">Save</button>
+      <a class="button ghost" href="/sites/{{ site.handle }}/content?type={{ type }}">Cancel</a>
+    </p>
+  </form>
+
+  {% if editing and site.factCheckEnabled %}
+  <div style="border-top:1px solid var(--border);margin-top:1.25rem;padding-top:1rem">
+    {% if fact_check_configured %}
+    <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap">
+      <form method="post" action="/sites/{{ site.handle }}/content/action" class="inline" data-busy="Fact-checking with {{ fact_check_model }}… this can take up to a minute.">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="fact-check">
+        <input type="hidden" name="id" value="{{ editing.id }}">
+        <input type="hidden" name="type" value="{{ editing.type }}">
+        <button class="button ghost" type="submit">&#128269; Fact-check</button>
+      </form>
+      <form method="post" action="/sites/{{ site.handle }}/content/action" class="inline"
+            data-confirm="Fact-check and automatically rewrite the body to correct contradicted and unverified claims? Review the changes before publishing." data-confirm-title="Fact-check &amp; auto-correct" data-confirm-ok="Check &amp; correct"
+            data-busy="Fact-checking &amp; correcting with {{ fact_check_model }}… this can take up to a minute.">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="fact-check-correct">
+        <input type="hidden" name="id" value="{{ editing.id }}">
+        <input type="hidden" name="type" value="{{ editing.type }}">
+        <button class="button" type="submit">&#10003; Fact-check &amp; auto-correct</button>
+      </form>
+      {% if fact_check_report %}<button type="button" class="button ghost small" data-modal-open="#fc-modal">View last report</button>{% endif %}
+    </div>
+    <p class="mut" style="font-size:.83rem;margin:.5rem 0 0">Verifies prices, stats and product/expert claims against live web sources — using <span class="mono">{{ fact_check_model }}</span>.</p>
+    {% else %}
+    <p class="mut" style="font-size:.88rem;margin:0">&#128269; Fact-checking needs an AI key. Add an <strong>OpenRouter</strong> key on your <a href="/account">Account</a>, then select it on this site's <a href="/sites/{{ site.handle }}/settings">Settings</a>.</p>
+    {% endif %}
+
+    {% if fact_check_report %}
+    <dialog id="fc-modal" class="modal"{% if fact_check_show %} data-modal-auto{% endif %}>
+      <div class="m-head"><h3>Fact-check report</h3><p class="mut" style="margin:0;font-size:.8rem">{% if fact_check_report.model %}<span class="mono">{{ fact_check_report.model }}</span>{% if fact_check_report.checked_at %} · {% endif %}{% endif %}{{ fact_check_report.checked_at }}</p></div>
+      <div class="m-body m-scroll">
+        {% if fact_check_report.summary %}<p style="margin:0 0 .6rem">{{ fact_check_report.summary }}</p>{% endif %}
+        {% for cl in fact_check_report.claims %}
+        <div style="border-top:1px solid var(--border);padding:.6rem 0">
+          <span class="badge {{ cl.verdict == 'supported' ? 'ok' : (cl.verdict == 'contradicted' ? 'err' : 'warn') }}">{{ cl.verdict }}</span>
+          <span>{{ cl.claim }}</span>
+          {% if cl.note %}<div class="mut" style="font-size:.85rem;margin-top:.25rem">{{ cl.note }}</div>{% endif %}
+          {% if cl.sources|length %}<div style="font-size:.8rem;margin-top:.2rem">{% for s in cl.sources %}<a href="{{ s }}" target="_blank" rel="noopener">source</a>{% if not loop.last %} · {% endif %}{% endfor %}</div>{% endif %}
+        </div>
+        {% else %}
+        <p class="mut" style="font-size:.9rem;margin:.4rem 0 0">No checkable claims found.</p>
+        {% endfor %}
+      </div>
+      <div class="m-actions"><button type="button" class="button small" data-modal-close>Close</button></div>
+    </dialog>
+    {% endif %}
+  </div>
+  {% elseif editing %}
+  <div style="border-top:1px solid var(--border);margin-top:1.25rem;padding-top:1rem">
+    <p class="mut" style="font-size:.88rem;margin:0">&#128269; Want to verify claims against live web sources? Enable <strong>fact-checking</strong> for this site on its <a href="/sites/{{ site.handle }}/settings">Settings</a>.</p>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if trash %}<p class="sub">Trash — deleted {{ type }}s. Restore brings one back; purge deletes it permanently.</p>{% endif %}
+
+<table>
+  <tr>
+    <th>Title</th><th>Status</th><th>Slug</th>
+    {% if site.locales|length and not trash %}<th>Translations</th>{% endif %}
+    <th>{{ trash ? 'Deleted' : 'Date' }}</th><th></th>
+  </tr>
+  {% for c in items %}
+  <tr>
+    <td>{{ c.title }}{% if c.warnings|length %} <span class="badge warn" title="{{ c.warnings|join(' ') }}">warn</span>{% endif %}</td>
+    <td><span class="badge {{ c.status }}">{{ c.status }}</span></td>
+    <td class="mono">{{ c.slug }}</td>
+    {% if site.locales|length and not trash %}
+    <td>
+      {% for locale in site.locales %}
+        {% set st = translations[c.id][locale]|default('missing') %}
+        <span class="badge {{ st == 'translated' or st == 'manual' ? 'ok' : (st == 'stale' or st == 'pending' ? 'warn' : 'err') }}" title="{{ locale_name(locale) }}: {{ st }}" style="display:inline-flex;align-items:center;gap:.25rem">{% if locale_flag_url(locale) %}<img src="{{ locale_flag_url(locale) }}" width="18" height="13" alt="" style="border-radius:2px;object-fit:cover;vertical-align:middle" onerror="this.replaceWith(document.createTextNode('{{ locale }}'))">{% else %}{{ locale_flag(locale) }}{% endif %}</span>
+      {% endfor %}
+    </td>
+    {% endif %}
+    <td class="mut">{{ trash ? c.deletedAt : (c.publishedAt ?: c.scheduledAt ?: c.createdAt) }}</td>
+    <td>
+      <div class="rowacts">
+      {% if trash %}
+        <form method="post" action="/sites/{{ site.handle }}/content/action" class="inline">
+          <input type="hidden" name="_csrf" value="{{ csrf }}">
+          <input type="hidden" name="action" value="restore">
+          <input type="hidden" name="id" value="{{ c.id }}">
+          <button class="linkbtn" type="submit">restore</button>
+        </form>
+        <form method="post" action="/sites/{{ site.handle }}/content/action" class="inline" data-confirm="Permanently delete “{{ c.title }}”? This cannot be undone." data-confirm-title="Delete permanently" data-confirm-ok="Delete" data-confirm-danger>
+          <input type="hidden" name="_csrf" value="{{ csrf }}">
+          <input type="hidden" name="action" value="purge">
+          <input type="hidden" name="id" value="{{ c.id }}">
+          <input type="hidden" name="type" value="{{ c.type }}">
+          <button class="linkbtn danger" type="submit">purge</button>
+        </form>
+      {% else %}
+        <a href="?type={{ type }}&amp;edit={{ c.id }}">edit</a>
+        <form method="post" action="/sites/{{ site.handle }}/content/action" class="inline" data-confirm="Move “{{ c.title }}” to trash?" data-confirm-title="Move to trash" data-confirm-ok="Move to trash">
+          <input type="hidden" name="_csrf" value="{{ csrf }}">
+          <input type="hidden" name="action" value="delete">
+          <input type="hidden" name="id" value="{{ c.id }}">
+          <button class="linkbtn danger" type="submit">delete</button>
+        </form>
+      {% endif %}
+      </div>
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="mut">{{ trash ? 'Trash is empty.' : 'No ' ~ type ~ 's yet.' }}</td></tr>
+  {% endfor %}
+</table>
+
+{% if pages > 1 and not trash %}
+<p style="margin-top:1rem">
+  {% for p in 1..pages %}
+    {% if p == page %}<strong>{{ p }}</strong>{% else %}<a href="?type={{ type }}&amp;page={{ p }}">{{ p }}</a>{% endif %}
+  {% endfor %}
+</p>
+{% endif %}
+
+{# Link modal for the WYSIWYG toolbar — replaces the native prompt(). Prefills
+   the href when the caret/selection sits inside an existing link, so links can
+   be edited in place; Remove unwraps it. Backdrop/Cancel wiring comes from the
+   layout's shared dialog.modal script. #}
+<dialog id="wy-link" class="modal">
+  <div class="m-head"><h3 id="wy-link-title">Insert link</h3></div>
+  <div class="m-body">
+    <label>URL</label>
+    <input type="text" id="wy-link-url" placeholder="https://example.com — or /page/, mailto:, #anchor" autocomplete="off" spellcheck="false">
+    <p class="mut" id="wy-link-hint" style="font-size:.83rem;margin:.5rem 0 0"></p>
+  </div>
+  <div class="m-actions">
+    <button type="button" class="button danger small" id="wy-link-remove" hidden>Remove link</button>
+    <span style="flex:1"></span>
+    <button type="button" class="button ghost small" data-modal-close>Cancel</button>
+    <button type="button" class="button small" id="wy-link-apply">Apply</button>
+  </div>
+</dialog>
+
+{% if creating or editing %}
+{# CodeMirror (same local bundle as the Site-Settings shell editor) powers the
+   Source split view. Loaded only when the editor form is on the page. #}
+<link rel="stylesheet" href="/assets/codemirror/lib/codemirror.css">
+<script src="/assets/codemirror/lib/codemirror.js"></script>
+<script src="/assets/codemirror/mode/xml/xml.js"></script>
+<script src="/assets/codemirror/mode/css/css.js"></script>
+<script src="/assets/codemirror/mode/javascript/javascript.js"></script>
+<script src="/assets/codemirror/mode/htmlmixed/htmlmixed.js"></script>
+<script src="/assets/codemirror/addon/edit/matchbrackets.js"></script>
+<script src="/assets/codemirror/addon/edit/closebrackets.js"></script>
+<script src="/assets/codemirror/addon/selection/active-line.js"></script>
+{% endif %}
+
+{# WYSIWYG (#14, #26). Dashboard-only. The editable surface is an iframe that
+   loads the SITE's real CSS so the layout is predictable and data-media-id
+   images render (via the thumbnail route). The plain textarea stays the
+   canonical body_html field: if init fails it remains visible (no regression),
+   and the Source toggle is always an escape hatch to raw HTML. #}
+<script>
+(function(){
+  var root = document.querySelector('[data-wysiwyg]');
+  if(!root) return;
+  var frame = root.querySelector('.wy-frame');
+  var ta = root.querySelector('.wy-source');
+  var toolbar = root.querySelector('.wy-toolbar');
+  if(!frame || !ta || !toolbar) return;
+
+  var handle = root.getAttribute('data-site') || '';
+  var thumbBase = '/sites/' + handle + '/media/';
+  var doc, edit, sourceMode = false;
+  var cm = null, split = false, lastEdited = 'editor', muteCm = false;
+  var cmPushTimer = null, edPushTimer = null, mapTimer = null;
+
+  function editorDoc(){
+    return '<!doctype html><html><head><meta charset="utf-8"><base target="_blank">'
+      + '<link rel="stylesheet" href="/sites/' + encodeURIComponent(handle) + '/shell.css">'
+      + '<style>html,body{margin:0}body{padding:1rem;box-sizing:border-box;min-height:22rem}'
+      + '.wy-body{outline:none;min-height:20rem}'
+      + '[data-fs-component],[data-fs-embed]{display:block;margin:.5rem 0;padding:.5rem .7rem;'
+      + 'border:1px dashed #2a86ff;border-radius:6px;color:#2a86ff;font:600 12px/1.4 ui-monospace,monospace}'
+      + '[data-fs-component]::before{content:"\\2699 component: " attr(data-fs-component)}'
+      + '[data-fs-component] *{display:none}'
+      + 'img{max-width:100%}img[data-media-id]:not([src]){min-width:60px;min-height:40px;outline:2px dashed #888}'
+      + '</style></head><body><div class="article-body wy-body" contenteditable="true"></div></body></html>';
+  }
+
+  function resolveImages(){
+    var imgs = edit.querySelectorAll('img[data-media-id]');
+    for(var i=0;i<imgs.length;i++){
+      var id = imgs[i].getAttribute('data-media-id');
+      if(id && !imgs[i].getAttribute('src')) imgs[i].setAttribute('src', thumbBase + encodeURIComponent(id) + '/thumb');
+    }
+  }
+  // Canonical HTML for saving: strip the display-only src from media images.
+  function cleanHtml(){
+    var clone = edit.cloneNode(true);
+    var imgs = clone.querySelectorAll('img[data-media-id]');
+    for(var i=0;i<imgs.length;i++){ imgs[i].removeAttribute('src'); imgs[i].removeAttribute('loading'); }
+    return clone.innerHTML;
+  }
+  function sync(){
+    if(sourceMode) return;
+    ta.value = cleanHtml();
+    if(split && cm !== null){
+      clearTimeout(cmPushTimer);
+      cmPushTimer = setTimeout(function(){
+        if(!split || cm.hasFocus()) return;
+        var v = cleanHtml();
+        if(cm.getValue() === v) return;
+        var si = cm.getScrollInfo();
+        muteCm = true; cm.setValue(v); muteCm = false;
+        cm.scrollTo(si.left, si.top);
+      }, 400);
+    }
+  }
+  function escHtml(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+  try {
+    frame.hidden = false; toolbar.hidden = false; ta.style.display = 'none';
+    doc = frame.contentDocument || (frame.contentWindow && frame.contentWindow.document);
+    if(!doc || typeof doc.execCommand !== 'function') throw new Error('no iframe doc');
+    doc.open(); doc.write(editorDoc()); doc.close();
+    edit = doc.querySelector('.wy-body');
+    edit.innerHTML = ta.value;
+    resolveImages();
+  } catch(e){
+    frame.hidden = true; toolbar.hidden = true; ta.style.display = ''; // graceful fallback
+    return;
+  }
+
+  edit.addEventListener('input', function(){ lastEdited = 'editor'; resolveImages(); sync(); });
+
+  // Pasting a bare URL inserts a real <a href> link (so a pasted YouTube URL
+  // becomes a player at build). With text selected, the selection becomes the
+  // link instead. Anything that isn't a lone URL pastes normally.
+  edit.addEventListener('paste', function(ev){
+    var dt = ev.clipboardData;
+    if(!dt) return;
+    var text = (dt.getData('text/plain') || '').trim();
+    if(!/^https?:\/\/\S+$/i.test(text)) return;
+    ev.preventDefault();
+    var sel = doc.getSelection();
+    if(sel && sel.rangeCount && !sel.isCollapsed){ exec('createLink', text); return; }
+    var esc = escHtml(text);
+    try { doc.execCommand('insertHTML', false, '<a href="' + esc + '">' + esc + '</a>'); } catch(e){}
+    resolveImages(); sync();
+  });
+
+  // Link modal (replaces the native prompt). With the caret or selection in
+  // an existing link it opens prefilled for in-place editing; with plain text
+  // selected, Apply wraps the selection; with nothing selected it inserts the
+  // URL as its own link text.
+  var linkDlg = document.getElementById('wy-link');
+  var linkUrl = document.getElementById('wy-link-url');
+  var linkTitle = document.getElementById('wy-link-title');
+  var linkHint = document.getElementById('wy-link-hint');
+  var linkRemove = document.getElementById('wy-link-remove');
+  var linkApply = document.getElementById('wy-link-apply');
+  var savedRange = null, editingA = null;
+
+  function anchorFrom(node){
+    while(node && node !== edit){
+      if(node.nodeType === 1 && node.tagName === 'A') return node;
+      node = node.parentNode;
+    }
+    return null;
+  }
+  function openLinkModal(){
+    if(!linkDlg || typeof linkDlg.showModal !== 'function'){
+      var u = prompt('Link URL:', 'https://'); if(u) exec('createLink', u); return;
+    }
+    var sel = doc.getSelection();
+    savedRange = (sel && sel.rangeCount) ? sel.getRangeAt(0).cloneRange() : null;
+    editingA = savedRange ? anchorFrom(savedRange.commonAncestorContainer) : null;
+    linkTitle.textContent = editingA ? 'Edit link' : 'Insert link';
+    linkRemove.hidden = !editingA;
+    linkUrl.value = editingA ? (editingA.getAttribute('href') || '') : '';
+    var txt = editingA ? editingA.textContent : (savedRange && !savedRange.collapsed ? savedRange.toString() : '');
+    linkHint.textContent = txt ? 'Link text: “' + txt + '”' : 'No text selected — the URL itself becomes the link text.';
+    linkDlg.showModal();
+    linkUrl.focus(); linkUrl.select();
+  }
+  // Leave explicit schemes, relative paths, queries and anchors alone; a bare
+  // domain ("example.com/x") gets https:// so it doesn't become a broken
+  // relative link.
+  function normalizeUrl(u){
+    if(/^([a-z][a-z0-9+.-]*:|[\/#?])/i.test(u)) return u;
+    return /^[^\s\/]+\.[^\s]+$/.test(u) ? 'https://' + u : u;
+  }
+  function removeLinkNow(){
+    focusEdit();
+    if(editingA){
+      var r = doc.createRange(); r.selectNodeContents(editingA);
+      var sel = doc.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    }
+    exec('unlink');
+  }
+  function applyLink(){
+    var u = normalizeUrl(linkUrl.value.trim());
+    linkDlg.close();
+    if(!u){ if(editingA) removeLinkNow(); return; }
+    focusEdit();
+    if(editingA){ editingA.setAttribute('href', u); sync(); return; }
+    var sel = doc.getSelection();
+    if(savedRange){ sel.removeAllRanges(); sel.addRange(savedRange); }
+    if(savedRange && !savedRange.collapsed){ exec('createLink', u); return; }
+    var esc = escHtml(u);
+    try { doc.execCommand('insertHTML', false, '<a href="' + esc + '">' + esc + '</a>'); } catch(e){}
+    resolveImages(); sync();
+  }
+  if(linkApply) linkApply.addEventListener('click', applyLink);
+  if(linkRemove) linkRemove.addEventListener('click', function(){ linkDlg.close(); removeLinkNow(); });
+  if(linkUrl) linkUrl.addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); applyLink(); } });
+
+  // Double-clicking a link in the editor opens the same modal on that link.
+  edit.addEventListener('dblclick', function(e){
+    var a = anchorFrom(e.target);
+    if(!a) return;
+    e.preventDefault();
+    var r = doc.createRange(); r.selectNodeContents(a);
+    var sel = doc.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    openLinkModal();
+  });
+
+  function focusEdit(){ try{ frame.contentWindow.focus(); }catch(e){} edit.focus(); }
+  function exec(cmd, val){ focusEdit(); try{ doc.execCommand(cmd, false, val || null); }catch(e){} resolveImages(); sync(); }
+  function insertHTML(html){
+    focusEdit();
+    var ok = false;
+    try { ok = doc.execCommand('insertHTML', false, html); } catch(e){}
+    if(!ok){ edit.insertAdjacentHTML('beforeend', html); }
+    resolveImages(); sync();
+  }
+
+  toolbar.addEventListener('click', function(ev){
+    var b = ev.target.closest('button'); if(!b) return;
+    ev.preventDefault();
+    if(b.hasAttribute('data-cmd')) return exec(b.getAttribute('data-cmd'));
+    if(b.hasAttribute('data-block')) return exec('formatBlock', b.getAttribute('data-block'));
+    if(b.hasAttribute('data-link')){ openLinkModal(); return; }
+    if(b.hasAttribute('data-img')){
+      var id = prompt('Media id (from the Media library):', '');
+      if(id){ var alt = prompt('Alt text (required for images):', '') || '';
+        insertHTML('<img data-media-id="' + String(id).replace(/[^0-9]/g,'') + '" alt="' + alt.replace(/"/g,'&quot;') + '">'); }
+      return;
+    }
+    if(b.hasAttribute('data-source')){
+      if(typeof CodeMirror !== 'undefined'){ split ? closeSplit(b) : openSplit(b); }
+      else toggleSource(b);
+      return;
+    }
+  });
+
+  var comp = toolbar.querySelector('.wy-comp');
+  if(comp){ comp.addEventListener('change', function(){
+    var h = comp.value; comp.value = '';
+    if(h) insertHTML('<div data-fs-component="' + h.replace(/[^A-Za-z0-9_-]/g,'') + '" data-values="{}"></div>');
+  }); }
+
+  // ---- Source split view. The designer stays live on the left, CodeMirror
+  // on the right (same local bundle + look as the Site-Settings shell editor).
+  // Edits flow both ways, debounced; whichever pane was edited last wins on
+  // save. toggleSource below stays as the no-CodeMirror fallback.
+  function initCm(){
+    if(cm !== null || typeof CodeMirror === 'undefined') return;
+    cm = CodeMirror.fromTextArea(ta, {
+      mode: 'htmlmixed', lineNumbers: true, lineWrapping: true,
+      indentUnit: 2, tabSize: 2, indentWithTabs: false,
+      matchBrackets: true, autoCloseBrackets: true, styleActiveLine: true
+    });
+    cm.on('change', function(){
+      if(muteCm) return;
+      lastEdited = 'source';
+      ta.value = cm.getValue();
+      clearTimeout(edPushTimer);
+      edPushTimer = setTimeout(function(){
+        edPushTimer = null;
+        edit.innerHTML = cm.getValue(); resolveImages();
+      }, 600);
+    });
+  }
+  function flushSource(){
+    if(edPushTimer){ clearTimeout(edPushTimer); edPushTimer = null; edit.innerHTML = cm.getValue(); resolveImages(); }
+  }
+  function openSplit(btn){
+    initCm();
+    if(cm === null){ toggleSource(btn); return; }
+    split = true; root.classList.add('split');
+    muteCm = true; cm.setValue(cleanHtml()); muteCm = false;
+    cm.refresh();
+    lastEdited = 'editor';
+    btn.classList.add('on');
+  }
+  function closeSplit(btn){
+    flushSource();
+    split = false; root.classList.remove('split');
+    btn.classList.remove('on');
+    sync();
+  }
+
+  // ---- Designer → source mapping: click, select or scroll in the designer
+  // and the source pane selects/scrolls to the same spot. Offsets are computed
+  // by walking the DOM exactly the way innerHTML serialises it (including
+  // cleanHtml's img-src stripping), so they are character-accurate against the
+  // source text; if the panes have drifted mid-edit it falls back to a
+  // unique-substring search for the clicked element.
+  var serBox = null;
+  function cleanCopy(node){
+    var c = node.cloneNode(true);
+    if(c.nodeType === 1){
+      var imgs = (c.matches && c.matches('img[data-media-id]')) ? [c] : [];
+      if(c.querySelectorAll) imgs = imgs.concat([].slice.call(c.querySelectorAll('img[data-media-id]')));
+      for(var i=0;i<imgs.length;i++){ imgs[i].removeAttribute('src'); imgs[i].removeAttribute('loading'); }
+    }
+    return c;
+  }
+  function serialize(node){
+    serBox = serBox || doc.createElement('div');
+    serBox.textContent = '';
+    serBox.appendChild(cleanCopy(node));
+    return serBox.innerHTML;
+  }
+  function escLen(text){
+    serBox = serBox || doc.createElement('div');
+    serBox.textContent = text;
+    return serBox.innerHTML.length;
+  }
+  function openTagLen(el){
+    // outer = open tag + inner + close tag; ancestors of a target are never void.
+    return serialize(el).length - cleanCopy(el).innerHTML.length - (el.tagName.length + 3);
+  }
+  function nodeStart(target){
+    var pos = 0, parent = edit;
+    for(;;){
+      var kids = parent.childNodes, descend = null;
+      for(var i = 0; i < kids.length; i++){
+        var k = kids[i];
+        if(k === target) return pos;
+        if(k.nodeType === 1 && k.contains(target)){ pos += openTagLen(k); descend = k; break; }
+        pos += serialize(k).length;
+      }
+      if(!descend) return -1;
+      parent = descend;
+    }
+  }
+  function boundaryOffset(container, offset){
+    if(container.nodeType === 3){
+      var s = nodeStart(container);
+      return s < 0 ? -1 : s + escLen(container.data.slice(0, offset));
+    }
+    if(container.nodeType !== 1 || (container !== edit && !edit.contains(container))) return -1;
+    if(offset < container.childNodes.length){
+      return container === edit && offset === 0 ? 0 : nodeStart(container.childNodes[offset]);
+    }
+    if(container === edit) return cleanHtml().length;
+    var st = nodeStart(container);
+    return st < 0 ? -1 : st + openTagLen(container) + cleanCopy(container).innerHTML.length;
+  }
+  function mapSelectionToSource(){
+    if(!split || cm === null || cm.hasFocus()) return;
+    var sel = doc.getSelection();
+    if(!sel || !sel.rangeCount) return;
+    var r = sel.getRangeAt(0);
+    if(r.startContainer !== edit && !edit.contains(r.startContainer)) return;
+    if(cm.getValue() === cleanHtml()){
+      var a = boundaryOffset(r.startContainer, r.startOffset);
+      var b = r.collapsed ? a : boundaryOffset(r.endContainer, r.endOffset);
+      if(a < 0 || b < 0) return;
+      var from = cm.posFromIndex(Math.min(a, b)), to = cm.posFromIndex(Math.max(a, b));
+      cm.setSelection(from, to, {scroll: false});
+      cm.scrollIntoView({from: from, to: to}, 80);
+      return;
+    }
+    var el = r.startContainer.nodeType === 1 ? r.startContainer : r.startContainer.parentNode;
+    if(!el || el === edit || !edit.contains(el)) return;
+    var snip = serialize(el), txt = cm.getValue();
+    var idx = txt.indexOf(snip);
+    if(idx < 0 || txt.indexOf(snip, idx + 1) >= 0) return;
+    var f = cm.posFromIndex(idx), t = cm.posFromIndex(idx + snip.length);
+    cm.setSelection(f, t, {scroll: false});
+    cm.scrollIntoView({from: f, to: t}, 80);
+  }
+  function queueMap(){ if(!split) return; clearTimeout(mapTimer); mapTimer = setTimeout(mapSelectionToSource, 80); }
+  doc.addEventListener('mouseup', queueMap);
+  doc.addEventListener('keyup', function(e){ if(/^(Arrow|Home$|End$|Page)/.test(e.key)) queueMap(); });
+  doc.addEventListener('scroll', function(){
+    if(!split || cm === null || cm.hasFocus()) return;
+    var se = doc.scrollingElement || doc.documentElement;
+    var max = se.scrollHeight - se.clientHeight;
+    if(max <= 0) return;
+    var si = cm.getScrollInfo();
+    cm.scrollTo(null, (se.scrollTop / max) * Math.max(0, si.height - si.clientHeight));
+  }, {passive: true});
+
+  function toggleSource(btn){
+    sourceMode = !sourceMode;
+    if(sourceMode){
+      ta.value = cleanHtml(); ta.style.display = ''; frame.hidden = true;
+      btn.classList.add('on'); btn.textContent = 'Editor';
+    } else {
+      edit.innerHTML = ta.value; resolveImages();
+      ta.style.display = 'none'; frame.hidden = false;
+      btn.classList.remove('on'); btn.textContent = 'Source';
+    }
+  }
+
+  var form = root.closest('form');
+  if(form) form.addEventListener('submit', function(){
+    if(cm !== null){
+      // CodeMirror's fromTextArea registers its own submit hook that copies
+      // the CM text into the textarea AFTER this listener — so make the CM
+      // text the truth: designer-last serialises the designer into it,
+      // source-last keeps the hand-written source verbatim.
+      if(lastEdited === 'editor'){ muteCm = true; cm.setValue(cleanHtml()); muteCm = false; }
+      ta.value = cm.getValue();
+      return;
+    }
+    if(!sourceMode) ta.value = cleanHtml();
+  });
+})();
+</script>
+{% endblock %}

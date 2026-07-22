@@ -1,0 +1,18 @@
+{# Per-site section switcher. Every screen for one site is now one click from
+   any other — before this the only path between them was back out through the
+   sites overview, since the sidebar links a site to its content screen only.
+   The current section renders solid, the rest ghost. #}
+{% set nav_base = '/sites/' ~ site.handle %}
+<div class="sitenav">
+  {% for s in [
+    {path: nav_base ~ '/content',    label: 'Content'},
+    {path: nav_base ~ '/media',      label: 'Media'},
+    {path: nav_base ~ '/files',      label: 'Files'},
+    {path: nav_base ~ '/components', label: 'Components'},
+    {path: nav_base ~ '/settings',   label: 'Settings'}
+  ] %}
+    <a class="button small {{ path == s.path ? '' : 'ghost' }}" href="{{ s.path }}">{{ s.label }}</a>
+  {% endfor %}
+  <span class="sitenav-gap"></span>
+  <a class="button small ghost" href="{{ nav_base }}/preview/" target="_blank" rel="noopener">Preview ↗</a>
+</div>

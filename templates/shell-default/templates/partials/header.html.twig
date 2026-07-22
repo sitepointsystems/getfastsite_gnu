@@ -1,0 +1,29 @@
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="/">{% if site.logo_header_url %}<img src="{{ site.logo_header_url }}" alt="{{ site.name }}" height="32">{% else %}{{ site.name }}{% endif %}</a>
+    <nav aria-label="Main">
+      <a href="/">{{ t('home') }}</a>
+      <a href="/blog/">{{ t('blog') }}</a>
+    </nav>
+    {% if page.hreflang is defined and page.hreflang|length > 1 %}
+    <details class="lang-switcher" data-fs-langnav style="position:relative">
+      <summary aria-label="Language" style="list-style:none;display:inline-flex;align-items:center;gap:.35rem;cursor:pointer">
+        {% if site.flags[site.locale] is defined %}<img src="{{ site.flags[site.locale] }}" alt="" width="20" height="15" style="border-radius:2px">{% endif %}
+        <span>{{ site.locale_names[site.locale]|default(site.locale|upper) }}</span>
+        <span aria-hidden="true" style="opacity:.6">&#9662;</span>
+      </summary>
+      <div class="lang-panel" style="position:absolute;top:calc(100% + .35rem);right:0;min-width:9.5rem;flex-direction:column;gap:.1rem;background:#fff;border:1px solid rgba(0,0,0,.12);border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.15);padding:.3rem;z-index:50">
+        {% for alt in page.hreflang %}
+          {% if alt.hreflang != 'x-default' %}
+          <a href="{{ alt.href }}" hreflang="{{ alt.hreflang }}"{% if alt.hreflang == site.locale %} aria-current="true"{% endif %} style="display:flex;align-items:center;gap:.4rem;text-decoration:none;padding:.35rem .5rem;border-radius:6px;white-space:nowrap{% if alt.hreflang == site.locale %};font-weight:700{% endif %}">
+            {% if site.flags[alt.hreflang] is defined %}<img src="{{ site.flags[alt.hreflang] }}" alt="" width="20" height="15" style="border-radius:2px">{% endif %}
+            <span>{{ site.locale_names[alt.hreflang]|default(alt.hreflang|upper) }}</span>
+          </a>
+          {% endif %}
+        {% endfor %}
+      </div>
+      <style>.lang-switcher > summary::-webkit-details-marker{display:none}.lang-switcher > .lang-panel{display:none}.lang-switcher[open] > .lang-panel{display:flex}</style>
+    </details>
+    {% endif %}
+  </div>
+</header>

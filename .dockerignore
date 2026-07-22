@@ -1,0 +1,13 @@
+# Never bake secrets, local state, or host-built artifacts into the image.
+.git
+.claude
+.env
+.env.*
+var/
+vendor/
+node_modules/
+tests/
+.phpunit.cache
+.phpunit.result.cache
+docker-compose*.yml
+README.md

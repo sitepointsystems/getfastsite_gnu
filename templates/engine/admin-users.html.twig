@@ -1,0 +1,81 @@
+{% extends 'dash-layout.html.twig' %}
+
+{% block body %}
+<h1>Users</h1>
+<p class="sub">Engine accounts. Site access is granted per site below.</p>
+
+<div class="card">
+  <h2 style="margin-top:0">Create user</h2>
+  <form method="post" action="/admin/users/action">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="action" value="create">
+    <div class="row">
+      <div><label>Email</label><input type="email" name="email" required></div>
+      <div><label>Name</label><input type="text" name="name"></div>
+      <div><label>Password <span class="mut">(12+)</span></label><input type="text" name="password" minlength="12" required></div>
+      <div class="tight">
+        <label>Role</label>
+        <select name="role"><option value="user">user</option><option value="admin">admin</option></select>
+      </div>
+      <div class="tight"><button class="button" type="submit">Create</button></div>
+    </div>
+  </form>
+</div>
+
+<table>
+  <tr><th>User</th><th>Role</th><th>2FA</th><th>Sites</th><th>Last login</th><th>Status</th><th>Actions</th></tr>
+  {% for u in users %}
+  <tr>
+    <td>{{ u.name ?: '—' }}<br><span class="mut">{{ u.email }}</span></td>
+    <td><span class="badge {{ u.role == 'admin' ? 'warn' : 'mut' }}">{{ u.role }}</span></td>
+    <td>{{ u.totp_on ? '✓' : '—' }}</td>
+    <td class="mut">{{ memberships[u.id]|default([])|join(', ') ?: (u.role == 'admin' ? 'all (admin)' : 'none') }}</td>
+    <td class="mut">{{ u.last_login_at ?: 'never' }}</td>
+    <td><span class="badge {{ u.is_active ? 'active' : 'inactive' }}">{{ u.is_active ? 'active' : 'inactive' }}</span></td>
+    <td style="min-width:16rem">
+      <form method="post" action="/admin/users/action" class="inline">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="toggle">
+        <input type="hidden" name="user_id" value="{{ u.id }}">
+        <button class="button small {{ u.is_active ? 'danger' : '' }}" type="submit">{{ u.is_active ? 'Deactivate' : 'Activate' }}</button>
+      </form>
+      <details style="display:inline-block">
+        <summary class="button small ghost" style="display:inline-block">More…</summary>
+        <div style="padding:.75rem 0">
+          <form method="post" action="/admin/users/action" class="row" style="margin-bottom:.5rem">
+            <input type="hidden" name="_csrf" value="{{ csrf }}">
+            <input type="hidden" name="action" value="reset-password">
+            <input type="hidden" name="user_id" value="{{ u.id }}">
+            <div><input type="text" name="password" placeholder="new password (12+)" minlength="12" required></div>
+            <div class="tight"><button class="button small ghost" type="submit">Reset password</button></div>
+          </form>
+          <form method="post" action="/admin/users/action" class="row">
+            <input type="hidden" name="_csrf" value="{{ csrf }}">
+            <input type="hidden" name="action" value="grant-site">
+            <input type="hidden" name="user_id" value="{{ u.id }}">
+            <div>
+              <select name="site">{% for h in site_handles %}<option>{{ h }}</option>{% endfor %}</select>
+            </div>
+            <div class="tight">
+              <select name="site_role"><option>editor</option><option>owner</option></select>
+            </div>
+            <div class="tight"><button class="button small ghost" type="submit">Grant site</button></div>
+          </form>
+          {% if memberships[u.id]|default([])|length %}
+          <form method="post" action="/admin/users/action" class="row" style="margin-top:.5rem">
+            <input type="hidden" name="_csrf" value="{{ csrf }}">
+            <input type="hidden" name="action" value="revoke-site">
+            <input type="hidden" name="user_id" value="{{ u.id }}">
+            <div>
+              <select name="site">{% for h in site_handles %}<option>{{ h }}</option>{% endfor %}</select>
+            </div>
+            <div class="tight"><button class="button small danger" type="submit">Revoke site</button></div>
+          </form>
+          {% endif %}
+        </div>
+      </details>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

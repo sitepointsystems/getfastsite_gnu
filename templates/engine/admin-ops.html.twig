@@ -1,0 +1,127 @@
+{% extends 'dash-layout.html.twig' %}
+
+{% block body %}
+<h1>Operations</h1>
+<p class="sub">Queue, builds, backups, health.</p>
+
+<div class="grid2">
+  <div class="card">
+    <h2 style="margin-top:0">Backups</h2>
+    <form method="post" action="/admin/ops/action" class="row">
+      <input type="hidden" name="_csrf" value="{{ csrf }}">
+      <input type="hidden" name="action" value="backup-now">
+      <div>
+        <label>Target</label>
+        <select name="site">
+          <option value="__engine__">engine.db</option>
+          {% for s in sites %}<option value="{{ s.handle }}">{{ s.handle }} (full)</option>{% endfor %}
+        </select>
+      </div>
+      <div class="tight"><button class="button" type="submit">Backup now</button></div>
+      <div class="tight">
+        <button class="button ghost" type="submit" form="prune-form">Prune old</button>
+      </div>
+    </form>
+    <form method="post" action="/admin/ops/action" id="prune-form" class="inline">
+      <input type="hidden" name="_csrf" value="{{ csrf }}">
+      <input type="hidden" name="action" value="prune-backups">
+    </form>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Restore a site <span class="badge err">destructive</span></h2>
+    <p class="mut" style="font-size:.85rem;margin:.25rem 0 .75rem">Latest DB snapshot → swap → rebuild → publish. The displaced DB is kept as .pre-restore. Engine restore is CLI-only.</p>
+    <form method="post" action="/admin/ops/action">
+      <input type="hidden" name="_csrf" value="{{ csrf }}">
+      <input type="hidden" name="action" value="restore-site">
+      <div class="row">
+        <div>
+          <label>Site</label>
+          <select name="site">{% for s in sites %}<option value="{{ s.handle }}">{{ s.handle }}</option>{% endfor %}</select>
+        </div>
+        <div><label>Type the handle to confirm</label><input type="text" name="confirm" autocomplete="off" required></div>
+      </div>
+      <div class="row" style="margin-top:.5rem">
+        <label style="display:flex;align-items:center;gap:.4rem;margin:0;cursor:pointer"><input type="checkbox" name="with_media" value="1"> also restore media</label>
+        <label style="display:flex;align-items:center;gap:.4rem;margin:0;cursor:pointer"><input type="checkbox" name="with_shell" value="1"> also restore shell</label>
+        <div class="tight"><button class="button danger" type="submit">Restore</button></div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<h2>Health {% if doctor is null %}<a class="button small ghost" href="?doctor=1">Run doctor</a>{% endif %}</h2>
+{% if doctor %}
+<table>
+  <tr><th>Check</th><th>Status</th><th>Detail</th></tr>
+  {% for c in doctor %}
+  <tr>
+    <td class="mono">{{ c.name }}</td>
+    <td><span class="badge {{ c.status == 'OK' ? 'ok' : (c.status == 'FAIL' ? 'err' : 'warn') }}">{{ c.status }}</span></td>
+    <td class="mut">{{ c.detail }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<h2>Jobs</h2>
+<table>
+  <tr><th>Type</th><th>Site</th><th>Status</th><th>Attempts</th><th>Error</th><th>Created</th><th></th></tr>
+  {% for j in jobs %}
+  <tr>
+    <td class="mono">{{ j.type }}</td>
+    <td>{{ j.site_handle ?: '—' }}</td>
+    <td><span class="badge {{ j.status }}">{{ j.status }}</span></td>
+    <td>{{ j.attempts }}</td>
+    <td class="mut" style="max-width:16rem">{{ j.error ? j.error|slice(0, 80) }}</td>
+    <td class="mut">{{ j.created_at }}</td>
+    <td>
+      {% if j.status in ['dead', 'failed'] %}
+      <form method="post" action="/admin/ops/action" class="inline">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="retry-job">
+        <input type="hidden" name="uuid" value="{{ j.uuid }}">
+        <button class="button small ghost" type="submit">Retry</button>
+      </form>
+      {% endif %}
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7" class="mut">No jobs yet.</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Builds</h2>
+<table>
+  <tr><th>Site</th><th>Trigger</th><th>Status</th><th>Stats</th><th>Started</th></tr>
+  {% for b in builds %}
+  <tr>
+    <td>{{ b.site_handle }}</td>
+    <td class="mut">{{ b.trigger_source }}</td>
+    <td><span class="badge {{ b.status }}">{{ b.status }}</span>{% if b.error %} <span class="mut">{{ b.error|slice(0, 60) }}</span>{% endif %}</td>
+    <td class="mut mono" style="font-size:.75rem">{{ b.stats }}</td>
+    <td class="mut">{{ b.started_at }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5" class="mut">No builds yet.</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Backup history</h2>
+<table>
+  <tr><th>#</th><th>Scope</th><th>Site</th><th>Kind</th><th>Size</th><th>Trigger</th><th>When</th></tr>
+  {% for b in backups %}
+  <tr>
+    <td>{{ b.id }}</td>
+    <td>{{ b.scope }}</td>
+    <td>{{ b.site_handle ?: '—' }}</td>
+    <td>{{ b.kind }}</td>
+    <td class="mut">{{ (b.size_bytes / 1024)|number_format(1) }} KB</td>
+    <td class="mut">{{ b.trigger_source }}</td>
+    <td class="mut">{{ b.created_at }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7" class="mut">No backups recorded yet.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

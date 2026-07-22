@@ -1,0 +1,18 @@
+{
+    "skip_to_content": "Skip to content",
+    "nav_how": "How it works",
+    "nav_api": "API & MCP",
+    "nav_webhooks": "Webhooks",
+    "blog": "Blog",
+    "cta_get_started": "Get started",
+    "footer_tagline": "The ultra-lean static publishing engine. Content in, 100/100/100/100 out.",
+    "footer_built_with": "Built and published with fastsite.",
+    "latest_posts": "Latest posts",
+    "all_posts": "All posts",
+    "blog_title": "Notes from the engine",
+    "blog_intro": "Releases, deep dives, and how fastsite keeps every page at a perfect score.",
+    "no_posts_yet": "No posts yet.",
+    "not_found": "Page not found",
+    "not_found_body": "The page you are looking for has moved or never existed.",
+    "back_home": "Back to the front page"
+}

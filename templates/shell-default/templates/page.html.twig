@@ -1,0 +1,15 @@
+{% extends 'base.html.twig' %}
+
+{% block main %}
+<article class="section article">
+  <div class="wrap reading">
+    <header class="article-header">
+      <h1>{{ content.title }}</h1>
+    </header>
+    {% if content.featured_html %}<figure class="article-featured">{{ content.featured_html|raw }}</figure>{% endif %}
+    <div class="article-body">
+      {{ content.body_html|raw }}
+    </div>
+  </div>
+</article>
+{% endblock %}

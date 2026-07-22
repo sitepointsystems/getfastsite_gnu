@@ -1,0 +1,19 @@
+{
+  "name": "fastsite-tools",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Node-side helpers for fastsite: image processing (sharp) and component SSR (M8).",
+  "type": "commonjs",
+  "dependencies": {
+    "esbuild": "^0.24.0",
+    "pixelmatch": "^7.2.0",
+    "playwright": "^1.61.1",
+    "pngjs": "^7.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "sharp": "^0.33.5"
+  },
+  "devDependencies": {
+    "codemirror": "^5.65.21"
+  }
+}

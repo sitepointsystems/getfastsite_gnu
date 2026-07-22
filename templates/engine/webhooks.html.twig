@@ -1,0 +1,80 @@
+{% extends 'dash-layout.html.twig' %}
+
+{% block body %}
+<h1>{{ site.name }} — webhooks</h1>
+<p class="sub">Send content in from anywhere. Each webhook maps a signed payload to a built-in action. HMAC signature: <span class="mono">X-Fastsite-Signature: t=&lt;unix&gt;,v1=&lt;hmac_sha256("&lt;t&gt;.&lt;body&gt;", secret)&gt;</span> + a unique <span class="mono">X-Delivery-Id</span>.</p>
+
+{% if reveal %}
+<div class="flash ok">
+  <strong>Signing secret for <span class="mono">{{ reveal.slug }}</span>:</strong><br>
+  <span class="mono" style="user-select:all">{{ reveal.secret }}</span><br>
+  <span class="mut">Endpoint: <span class="mono">/webhooks/{{ reveal.slug }}</span> — mapper <span class="mono">{{ reveal.mapper }}</span></span>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2 style="margin-top:0">New webhook</h2>
+  <form method="post" action="/sites/{{ site.handle }}/webhooks/action" class="row">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="action" value="webhook-create">
+    <div><label>Slug <span class="mut">(the URL: /webhooks/&lt;slug&gt;)</span></label><input type="text" name="slug" placeholder="my-cms" required></div>
+    <div><label>Action (mapper)</label>
+      <select name="mapper">
+        {% for k in mapper_keys %}<option value="{{ k }}">{{ k }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="tight" style="align-self:end"><button class="button" type="submit">Create</button></div>
+  </form>
+</div>
+
+<table>
+  <tr><th>Slug</th><th>Action</th><th>State</th><th>Deliveries</th><th></th></tr>
+  {% for i in integrations %}
+  <tr>
+    <td class="mono">/webhooks/{{ i.slug }}</td>
+    <td class="mono mut">{{ i.mapper }}</td>
+    <td>{% if i.active %}<span class="badge ok">active</span>{% else %}<span class="badge mut">paused</span>{% endif %}</td>
+    <td><a href="?deliveries={{ i.id }}">{{ i.deliveries }}</a></td>
+    <td>
+      <div style="display:flex;gap:.4rem;justify-content:flex-end">
+        <a class="button small ghost" href="?secret_for={{ i.id }}">Secret</a>
+        <form method="post" action="/sites/{{ site.handle }}/webhooks/action" class="inline">
+          <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="webhook-toggle"><input type="hidden" name="id" value="{{ i.id }}"><input type="hidden" name="active" value="{{ i.active ? '0' : '1' }}">
+          <button class="button small ghost" type="submit">{{ i.active ? 'Pause' : 'Enable' }}</button>
+        </form>
+        <form method="post" action="/sites/{{ site.handle }}/webhooks/action" class="inline" onsubmit="return confirm('Delete this webhook and its deliveries?')">
+          <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="webhook-delete"><input type="hidden" name="id" value="{{ i.id }}">
+          <button class="button small danger" type="submit">Delete</button>
+        </form>
+      </div>
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5" class="mut">No webhooks yet.</td></tr>
+  {% endfor %}
+</table>
+
+{% if deliveries %}
+<div class="card">
+  <h2 style="margin-top:0">Recent deliveries</h2>
+  <table>
+    <tr><th>ID</th><th>Event</th><th>Status</th><th>Error</th><th>When</th><th></th></tr>
+    {% for d in deliveries %}
+    <tr>
+      <td class="mono">#{{ d.id }}</td>
+      <td class="mut">{{ d.event }}</td>
+      <td><span class="badge {{ d.status == 'processed' ? 'ok' : (d.status == 'failed' ? 'err' : 'mut') }}">{{ d.status }}</span></td>
+      <td class="mut" style="max-width:16rem;overflow:hidden;text-overflow:ellipsis">{{ d.error }}</td>
+      <td class="mut">{{ d.created_at }}</td>
+      <td>
+        <form method="post" action="/sites/{{ site.handle }}/webhooks/action" class="inline">
+          <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="webhook-replay"><input type="hidden" name="delivery_id" value="{{ d.id }}">
+          <button class="button small ghost" type="submit">Replay</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+{% endblock %}

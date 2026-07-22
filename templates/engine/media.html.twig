@@ -1,0 +1,99 @@
+{% extends 'dash-layout.html.twig' %}
+
+{% block body %}
+<style>
+  .media-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:1rem;margin-top:1rem}
+  .media-tile{border:1px solid var(--line,#1c2b3d);border-radius:12px;overflow:hidden;background:var(--bg-2,#0d1622);display:flex;flex-direction:column}
+  .media-thumb{aspect-ratio:4/3;background:#0a121c center/cover no-repeat;display:flex;align-items:center;justify-content:center;color:#5b6b7e;font-size:2rem}
+  .media-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .media-meta{padding:.6rem .7rem;font-size:.82rem;display:flex;flex-direction:column;gap:.35rem}
+  .media-meta .mono{font-size:.76rem;color:#8aa0b8;word-break:break-all}
+  .media-acts{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.2rem}
+  .linkbtn{background:none;border:0;padding:0;font:inherit;color:var(--accent);cursor:pointer;text-decoration:underline}
+  .linkbtn.danger{color:var(--danger)}
+  .media-editrow{display:flex;gap:.35rem;margin-top:.3rem}
+  .media-editrow input[type=text]{flex:1;min-width:0;font-size:.78rem;padding:.3rem .4rem}
+</style>
+
+<h1>{{ site.name }}</h1>
+{% include 'site-nav.html.twig' %}
+<div class="tabs">
+  <a href="/sites/{{ site.handle }}/media" class="{{ not trash ? 'active' }}">Library</a>
+  <a href="?trash=1" class="{{ trash ? 'active' }}">Trash</a>
+  <span style="flex:1"></span>
+  <span class="sub" style="margin:0">{{ total }} item(s)</span>
+</div>
+
+{% if not trash %}
+<div class="card">
+  <h2 style="margin-top:0">Add media</h2>
+  <form method="post" action="/sites/{{ site.handle }}/media/action" enctype="multipart/form-data">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="row">
+      <div><label>File</label><input type="file" name="file"></div>
+      <div><label>… or import from URL</label><input type="url" name="url" placeholder="https://…"></div>
+    </div>
+    <div class="row">
+      <div><label>Alt text <span class="mut">(required for images)</span></label><input type="text" name="alt"></div>
+      <div class="tight" style="align-self:center">
+        <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer;margin:0">
+          <input type="checkbox" name="decorative" value="1"> decorative (no alt)
+        </label>
+      </div>
+      <div class="tight"><button class="button" type="submit">Upload</button></div>
+    </div>
+  </form>
+</div>
+{% endif %}
+
+<div class="media-grid">
+  {% for m in items %}
+  <div class="media-tile">
+    <div class="media-thumb"{% if m.kind == 'video' %} title="video"{% endif %}>
+      {% if m.kind == 'image' %}
+        <img src="/sites/{{ site.handle }}/media/{{ m.id }}/thumb" alt="{{ m.alt }}" loading="lazy"
+             onerror="this.style.display='none';this.parentNode.textContent='🖼'">
+      {% else %}🎞{% endif %}
+    </div>
+    <div class="media-meta">
+      <div><span class="mono">#{{ m.id }}</span> · {{ m.kind }}{% if m.width %} · {{ m.width }}×{{ m.height }}{% endif %} · {{ (m.bytes / 1024)|number_format(0) }} KB</div>
+      <div class="mono" style="user-select:all">&lt;img data-media-id="{{ m.id }}" alt="{{ m.alt }}"&gt;</div>
+      {% if trash %}
+        <div class="media-acts">
+          <form method="post" action="/sites/{{ site.handle }}/media/action" class="inline">
+            <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="restore"><input type="hidden" name="id" value="{{ m.id }}">
+            <button class="linkbtn" type="submit">restore</button>
+          </form>
+          <form method="post" action="/sites/{{ site.handle }}/media/action" class="inline" onsubmit="return confirm('Permanently delete #{{ m.id }} and its files? This cannot be undone.')">
+            <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="purge"><input type="hidden" name="id" value="{{ m.id }}">
+            <button class="linkbtn danger" type="submit">purge</button>
+          </form>
+        </div>
+      {% else %}
+        <form method="post" action="/sites/{{ site.handle }}/media/action" class="media-editrow">
+          <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="edit"><input type="hidden" name="id" value="{{ m.id }}">
+          <input type="text" name="alt" value="{{ m.alt }}" placeholder="alt text">
+          <button class="button small" type="submit">Save</button>
+        </form>
+        <div class="media-acts">
+          <form method="post" action="/sites/{{ site.handle }}/media/action" class="inline" onsubmit="return confirm('Move #{{ m.id }} to trash?')">
+            <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="{{ m.id }}">
+            <button class="linkbtn danger" type="submit">delete</button>
+          </form>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+  {% else %}
+  <p class="mut">{{ trash ? 'Trash is empty.' : 'No media yet.' }}</p>
+  {% endfor %}
+</div>
+
+{% if pages > 1 %}
+<p style="margin-top:1rem">
+  {% for p in 1..pages %}
+    {% if p == page %}<strong>{{ p }}</strong>{% else %}<a href="?{{ trash ? 'trash=1&amp;' }}page={{ p }}">{{ p }}</a>{% endif %}
+  {% endfor %}
+</p>
+{% endif %}
+{% endblock %}

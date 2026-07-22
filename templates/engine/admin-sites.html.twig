@@ -1,0 +1,107 @@
+{% extends 'dash-layout.html.twig' %}
+
+{% block body %}
+<h1>Sites &amp; webhooks</h1>
+<p class="sub">Site registry and signed inbound integrations (autoseo etc.).</p>
+
+{% if new_secret %}
+<div class="flash ok">
+  <strong>Webhook "{{ new_secret.slug }}" created. Secret — shown ONCE, configure the sender now:</strong><br>
+  <span class="mono" style="user-select:all">{{ new_secret.secret }}</span><br>
+  <span class="mut">Sign: X-Fastsite-Signature: t=&lt;unix&gt;,v1=hmac_sha256("&lt;t&gt;.&lt;body&gt;", secret) + unique X-Delivery-Id.</span>
+</div>
+{% endif %}
+
+<div class="grid2">
+  <div class="card">
+    <h2 style="margin-top:0">Create site</h2>
+    <form method="post" action="/admin/sites/action">
+      <input type="hidden" name="_csrf" value="{{ csrf }}">
+      <input type="hidden" name="action" value="create-site">
+      <div class="row">
+        <div><label>Handle <span class="mut">(a-z0-9-)</span></label><input type="text" name="handle" pattern="[a-z0-9][a-z0-9-]+" required></div>
+        <div><label>Name</label><input type="text" name="name"></div>
+      </div>
+      <div class="row">
+        <div><label>Base URL</label><input type="url" name="url" placeholder="https://example.com"></div>
+        <div><label>Git repo <span class="mut">(dist)</span></label><input type="text" name="repo" placeholder="git@github.com:me/site-dist.git"></div>
+        <div class="tight"><label>Locale</label><input type="text" name="locale" value="en" size="4"></div>
+      </div>
+      <p style="margin:1.25rem 0 0"><button class="button" type="submit">Create site</button></p>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Create webhook integration</h2>
+    <form method="post" action="/admin/sites/action">
+      <input type="hidden" name="_csrf" value="{{ csrf }}">
+      <input type="hidden" name="action" value="create-webhook">
+      <div class="row">
+        <div><label>Slug</label><input type="text" name="slug" placeholder="autoseo-demo" required></div>
+        <div>
+          <label>Site</label>
+          <select name="site">{% for s in sites %}<option value="{{ s.handle }}">{{ s.handle }}</option>{% endfor %}</select>
+        </div>
+        <div class="tight"><label>Mapper</label><input type="text" name="mapper" value="autoseo"></div>
+      </div>
+      <p style="margin:1.25rem 0 0"><button class="button" type="submit">Create — secret shown once</button></p>
+    </form>
+  </div>
+</div>
+
+<h2>Sites</h2>
+<table>
+  <tr><th>Handle</th><th>Name</th><th>URL</th><th>Repo</th><th>Locales</th><th>Status</th></tr>
+  {% for s in sites %}
+  <tr>
+    <td class="mono">{{ s.handle }}</td>
+    <td>{{ s.name }}</td>
+    <td class="mut">{{ s.baseUrl ?: '—' }}</td>
+    <td class="mut">{{ s.githubRepo ?: 'local only' }}</td>
+    <td>{{ s.primaryLocale }}{% for l in s.locales %}, {{ l }}{% endfor %}</td>
+    <td><span class="badge {{ s.status == 'active' ? 'ok' : 'mut' }}">{{ s.status }}</span></td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>Webhook integrations</h2>
+<table>
+  <tr><th>Slug</th><th>Site</th><th>Mapper</th><th>Endpoint</th><th>Status</th></tr>
+  {% for i in integrations %}
+  <tr>
+    <td class="mono">{{ i.slug }}</td>
+    <td>{{ i.site_handle }}</td>
+    <td>{{ i.mapper }}</td>
+    <td class="mono mut">/webhooks/{{ i.slug }}</td>
+    <td><span class="badge {{ i.active ? 'ok' : 'mut' }}">{{ i.active ? 'active' : 'disabled' }}</span></td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5" class="mut">None yet.</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Recent deliveries</h2>
+<table>
+  <tr><th>#</th><th>Integration</th><th>Delivery id</th><th>Status</th><th>Result / error</th><th>When</th><th></th></tr>
+  {% for d in deliveries %}
+  <tr>
+    <td>{{ d.id }}</td>
+    <td class="mono">{{ d.slug }}</td>
+    <td class="mono mut">{{ d.delivery_uuid }}</td>
+    <td><span class="badge {{ d.status == 'processed' ? 'ok' : (d.status == 'failed' ? 'err' : 'warn') }}">{{ d.status }}</span></td>
+    <td class="mut" style="max-width:18rem">{{ d.error ?: d.result }}</td>
+    <td class="mut">{{ d.created_at }}</td>
+    <td>
+      <form method="post" action="/admin/sites/action" class="inline">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="replay-delivery">
+        <input type="hidden" name="delivery_id" value="{{ d.id }}">
+        <button class="button small ghost" type="submit">Replay</button>
+      </form>
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7" class="mut">No deliveries yet.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

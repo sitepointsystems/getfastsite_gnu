@@ -1,0 +1,73 @@
+{% extends 'dash-layout.html.twig' %}
+
+{% block body %}
+<style>
+  .linkbtn{background:none;border:0;padding:0;font:inherit;color:var(--accent);cursor:pointer;text-decoration:underline}
+  .linkbtn.danger{color:var(--danger)}
+</style>
+<h1>{{ site.name }}</h1>
+<p class="sub">Files — any type, served from <span class="mono">/files/</span> with immutable caching. Embed with <span class="mono">{{ '{{ filename }}' }}</span>: HTML/JS files are inlined and run (trusted — not sanitized); PDF/ZIP/other show a download link.</p>
+{% include 'site-nav.html.twig' %}
+
+<div class="tabs">
+  <a href="/sites/{{ site.handle }}/files" class="{{ not trash ? 'active' }}">Library</a>
+  <a href="?trash=1" class="{{ trash ? 'active' }}">Trash</a>
+  <span style="flex:1"></span>
+  <span class="sub" style="margin:0">{{ total }} item(s)</span>
+</div>
+
+{% if not trash %}
+<div class="card">
+  <h2 style="margin-top:0">Add file</h2>
+  <form method="post" action="/sites/{{ site.handle }}/files/action" enctype="multipart/form-data">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="row">
+      <div><label>File <span class="mut">(any type — html/js widgets, pdf, docs, csv, fonts, archives, audio…)</span></label><input type="file" name="file"></div>
+      <div class="tight" style="align-self:end"><button class="button" type="submit">Upload</button></div>
+    </div>
+  </form>
+</div>
+{% endif %}
+
+<table>
+  <tr><th>ID</th><th>Name</th><th>Type</th><th>Size</th><th>Embed</th><th></th></tr>
+  {% for m in items %}
+  <tr>
+    <td class="mono">#{{ m.id }}</td>
+    <td>📄 {{ m.originalName }}</td>
+    <td class="mut mono">{{ m.ext }}</td>
+    <td class="mut">{{ (m.bytes / 1024)|number_format(0) }} KB</td>
+    <td class="mono" style="user-select:all">{{ '{{ ' ~ m.originalName ~ ' }}' }}</td>
+    <td>
+      <div class="rowacts">
+      {% if trash %}
+        <form method="post" action="/sites/{{ site.handle }}/files/action" class="inline">
+          <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="restore"><input type="hidden" name="id" value="{{ m.id }}">
+          <button class="linkbtn" type="submit">restore</button>
+        </form>
+        <form method="post" action="/sites/{{ site.handle }}/files/action" class="inline" onsubmit="return confirm('Permanently delete #{{ m.id }}? This cannot be undone.')">
+          <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="purge"><input type="hidden" name="id" value="{{ m.id }}">
+          <button class="linkbtn danger" type="submit">purge</button>
+        </form>
+      {% else %}
+        <form method="post" action="/sites/{{ site.handle }}/files/action" class="inline" onsubmit="return confirm('Move #{{ m.id }} to trash?')">
+          <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="{{ m.id }}">
+          <button class="linkbtn danger" type="submit">delete</button>
+        </form>
+      {% endif %}
+      </div>
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="mut">{{ trash ? 'Trash is empty.' : 'No files yet.' }}</td></tr>
+  {% endfor %}
+</table>
+
+{% if pages > 1 %}
+<p style="margin-top:1rem">
+  {% for p in 1..pages %}
+    {% if p == page %}<strong>{{ p }}</strong>{% else %}<a href="?{{ trash ? 'trash=1&amp;' }}page={{ p }}">{{ p }}</a>{% endif %}
+  {% endfor %}
+</p>
+{% endif %}
+{% endblock %}

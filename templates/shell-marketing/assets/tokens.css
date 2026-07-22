@@ -1,0 +1,39 @@
+/* ── getfastsite.com — design tokens ──────────────────────────────────
+   The marketing shell for fastsite itself, authored and published through
+   the engine (dogfood). System font stack = zero font downloads, one of the
+   PageSpeed rules this very site advertises. */
+:root {
+  /* surfaces — cold slate, green channel above red so nothing reads violet */
+  --bg: #070d14;
+  --bg-2: #0b1420;
+  --surface: #101b28;
+  --surface-2: #16263a;
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  /* text */
+  --text: #eef4fb;
+  --text-2: #a9bdd4;
+  --muted: #7891a8;
+
+  /* brand — logo blue primary, teal "100 score" secondary */
+  --accent: #2a86ff;
+  --accent-2: #06d6a0;
+  --accent-hover: #4d9bff;
+  --cta: #06d6a0;
+  --cta-ink: #04121a;
+
+  /* effects */
+  --glow: 0 0 40px rgba(42, 134, 255, 0.28);
+  --glow-2: 0 0 40px rgba(6, 214, 160, 0.22);
+
+  /* shape & rhythm */
+  --radius: 16px;
+  --radius-sm: 9px;
+  --wrap: 74rem;
+  --reading: 44rem;
+
+  /* type — system stack: zero font downloads */
+  --font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --mono: ui-monospace, 'Cascadia Code', 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+}

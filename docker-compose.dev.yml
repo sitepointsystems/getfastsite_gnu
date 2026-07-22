@@ -1,0 +1,31 @@
+# Local development only — bind mounts + published ports.
+# Production deploys use docker-compose.yml via Coolify.
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      - APP_ENV=local
+      - APP_URL=http://localhost:8080
+      - APP_SECRET=${APP_SECRET:-dev-secret-change-me}
+      - DATA_PATH=/data
+      - REDIS_URL=tcp://redis:6379
+    volumes:
+      - ./:/app
+      # Keep the image-built vendor/ visible under the bind mount.
+      - /app/vendor
+      - ./docker/php.dev.ini:/usr/local/etc/php/conf.d/zz-dev.ini:ro
+      - fastsite-dev-data:/data
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+
+volumes:
+  fastsite-dev-data:

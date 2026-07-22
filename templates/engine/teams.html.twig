@@ -1,0 +1,84 @@
+{% extends 'dash-layout.html.twig' %}
+
+{% block body %}
+<h1>Teams</h1>
+<p class="sub">Share sites with collaborators. Invite by email; a member reaches every site the team owns. Attach a site to a team from its Settings screen.</p>
+
+{% if invite_link %}
+<div class="flash ok">
+  <strong>Invite link (share it now):</strong><br>
+  <span class="mono" style="user-select:all">{{ invite_link }}</span>
+</div>
+{% endif %}
+
+<div class="grid2">
+  <div>
+    <div class="card">
+      <h2 style="margin-top:0">Your teams</h2>
+      <table>
+        <tr><th>Name</th><th>Role</th><th>Members</th><th></th></tr>
+        {% for t in teams %}
+        <tr>
+          <td>{{ t.name }}</td>
+          <td><span class="badge {{ t.role == 'owner' ? 'ok' : 'mut' }}">{{ t.role }}</span></td>
+          <td class="mut">{{ t.members }}</td>
+          <td><a href="?team={{ t.id }}">open</a></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="mut">No teams yet.</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0">New team</h2>
+      <form method="post" action="/teams/action" class="row">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="team-create">
+        <div><label>Name</label><input type="text" name="name" placeholder="Content crew" required></div>
+        <div class="tight" style="align-self:end"><button class="button" type="submit">Create</button></div>
+      </form>
+    </div>
+  </div>
+
+  <div>
+    {% if open %}
+    <div class="card">
+      <h2 style="margin-top:0">Members</h2>
+      <table>
+        <tr><th>Email</th><th>Role</th><th></th></tr>
+        {% for m in members %}
+        <tr>
+          <td>{{ m.email }}{% if m.id == me %} <span class="mut">(you)</span>{% endif %}</td>
+          <td><span class="badge {{ m.role == 'owner' ? 'ok' : 'mut' }}">{{ m.role }}</span></td>
+          <td>
+            {% if is_owner and m.role != 'owner' %}
+            <form method="post" action="/teams/action" class="inline" onsubmit="return confirm('Remove {{ m.email|e('js') }}?')">
+              <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="team-remove">
+              <input type="hidden" name="team_id" value="{{ open }}"><input type="hidden" name="user_id" value="{{ m.id }}">
+              <button class="button small ghost" type="submit">Remove</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% if is_owner %}
+      <form method="post" action="/teams/action" class="row" style="margin-top:1rem">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="team-invite">
+        <input type="hidden" name="team_id" value="{{ open }}">
+        <div><label>Invite by email</label><input type="email" name="email" placeholder="writer@example.com" required></div>
+        <div class="tight" style="align-self:end"><button class="button" type="submit">Invite</button></div>
+      </form>
+      {% if invites %}
+      <p class="mut" style="margin-top:1rem;font-size:.85rem">Pending: {% for i in invites %}<span class="mono">{{ i.email }}</span>{% if not loop.last %}, {% endif %}{% endfor %}</p>
+      {% endif %}
+      {% endif %}
+    </div>
+    {% else %}
+    <div class="card"><p class="mut">Open a team to manage members and invites.</p></div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

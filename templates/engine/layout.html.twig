@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title|default('fastsite') }}</title>
+<meta name="robots" content="noindex">
+{% if brand.has_icon %}<link rel="icon" href="{{ brand.icon_url }}">{% endif %}
+<style>
+/* Brand blue (matches the logo) + cold slate background; the card glow is
+   blue. Kept in sync with dash-layout.html.twig. */
+:root{--bg:#070d14;--bg-2:#0b1420;--surface:#101b28;--border:rgba(255,255,255,.09);--text:#eef4fb;--text-2:#9bb0c6;--muted:#7891a8;--accent:#2a86ff;--accent-hover:#1a74ee;--ok:#06d6a0;--cta:#f59e0b;--glow:0 0 32px rgba(42,134,255,.26);--radius:14px;--font:ui-sans-serif,system-ui,'Segoe UI',Roboto,sans-serif}
+  *{scrollbar-width:thin;scrollbar-color:#2a3b52 transparent}
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#243247;border-radius:999px;border:2px solid transparent;background-clip:padding-box}
+  ::-webkit-scrollbar-thumb:hover{background:var(--accent);background-clip:padding-box}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(130% 130% at 50% 0%,rgba(42,134,255,.13),transparent 55%),var(--bg);color:var(--text);font-family:var(--font);line-height:1.6;padding:1.5rem}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--glow);width:100%;max-width:26rem;padding:2rem}
+.brand{display:flex;align-items:center;gap:.6rem;font-weight:700;font-size:1.15rem;margin:0 0 1.5rem}
+.dot{width:.85rem;height:.85rem;border-radius:50%;background:var(--accent);box-shadow:0 0 12px var(--accent)}
+h1{font-size:1.4rem;letter-spacing:-.02em;margin:0 0 .35rem}
+.sub{color:var(--text-2);margin:0 0 1.5rem;font-size:.95rem}
+label{display:block;font-size:.85rem;color:var(--text-2);margin:1rem 0 .35rem}
+input[type=email],input[type=password]{width:100%;background:var(--bg-2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:.7rem .85rem;font-size:1rem}
+input:focus{outline:2px solid var(--accent);outline-offset:1px}
+.button{display:block;width:100%;margin-top:1.5rem;background:var(--accent);color:#fff;font-weight:700;border:0;border-radius:8px;padding:.8rem;font-size:1rem;cursor:pointer}
+.button:hover{background:var(--accent-hover)}
+.button.secondary{background:transparent;color:var(--text-2);border:1px solid var(--border);margin-top:.75rem}
+.button.secondary:hover{color:var(--text)}
+.error{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:#fca5a5;border-radius:8px;padding:.7rem .85rem;font-size:.9rem;margin-bottom:1rem}
+.client{display:flex;align-items:center;gap:.75rem;background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:.85rem 1rem;margin:1rem 0}
+.client .name{font-weight:600}
+.scopes{list-style:none;padding:0;margin:1rem 0}
+.scopes li{display:flex;align-items:flex-start;gap:.6rem;padding:.45rem 0;color:var(--text-2);font-size:.92rem;border-top:1px solid var(--border)}
+.scopes li::before{content:'✓';color:var(--accent);font-weight:700}
+.scopes .scope-name{color:var(--text)}
+.foot{margin-top:1.5rem;color:var(--muted);font-size:.8rem;text-align:center}
+.brand-logo{display:block;height:2.6rem;width:auto;max-width:100%;margin:0 0 1.5rem}
+.brand-lockup{display:flex;align-items:center;gap:.6rem;margin:0 0 1.5rem}
+.brand-lockup img{height:2rem;width:auto}
+</style>
+</head>
+<body>
+<main class="card">
+{% if brand.has_logo %}
+  <img class="brand-logo" src="{{ brand.logo_url }}" alt="FastSite">
+{% elseif brand.has_icon %}
+  <p class="brand-lockup"><img src="{{ brand.icon_url }}" alt=""> <span style="font-weight:700;font-size:1.15rem">FastSite</span></p>
+{% else %}
+  <p class="brand"><span class="dot"></span> fastsite</p>
+{% endif %}
+{% block body %}{% endblock %}
+</main>
+</body>
+</html>

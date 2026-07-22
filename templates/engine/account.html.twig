@@ -1,0 +1,263 @@
+{% extends 'dash-layout.html.twig' %}
+
+{% block body %}
+<h1>Account</h1>
+<p class="sub">{{ user.email }} — {{ user.role }}</p>
+
+{% if new_key %}
+<div class="flash ok">
+  <strong>API key created — copy it now, it is shown ONCE:</strong><br>
+  <span class="mono" style="user-select:all">{{ new_key }}</span>
+</div>
+{% endif %}
+
+<div class="grid2">
+  <div>
+    <div class="card">
+      <h2 style="margin-top:0">Password</h2>
+      <form method="post" action="/account/action">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="password">
+        <label>Current password</label>
+        <input type="password" name="current" autocomplete="current-password" required>
+        <label>New password <span class="mut">(12+ characters)</span></label>
+        <input type="password" name="new" autocomplete="new-password" minlength="12" required>
+        <p style="margin:1rem 0 0"><button class="button" type="submit">Change password</button></p>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0">Two-factor authentication</h2>
+      {% if totp_setup %}
+        {% if totp_setup.error %}<div class="flash err">{{ totp_setup.error }}</div>{% endif %}
+        <p>1. Add this account to your authenticator app:</p>
+        <p style="margin:.2rem 0 .6rem"><a class="button small" href="{{ totp_setup.uri }}">📲 Open in authenticator app</a> <span class="mut" style="font-size:.8rem">(on this device — taps straight into Google Authenticator / 1Password / Authy)</span></p>
+        <p class="mut" style="font-size:.85rem;margin:.4rem 0 .2rem">Or add it manually — account <span class="mono">{{ user.email }}</span>, time-based, secret:</p>
+        <p class="mono" style="user-select:all;background:var(--bg-2);padding:.6rem .8rem;border-radius:8px;letter-spacing:.12em">{{ totp_setup.seed }}</p>
+        <p>2. Enter the current code to switch it on:</p>
+        <form method="post" action="/account/action" class="row">
+          <input type="hidden" name="_csrf" value="{{ csrf }}">
+          <input type="hidden" name="action" value="totp-enable">
+          <div><input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" required></div>
+          <div class="tight"><button class="button" type="submit">Verify &amp; enable</button></div>
+        </form>
+      {% elseif totp_enabled %}
+        <p><span class="badge ok">ON</span> — every sign-in asks for a code.</p>
+        <form method="post" action="/account/action" class="row">
+          <input type="hidden" name="_csrf" value="{{ csrf }}">
+          <input type="hidden" name="action" value="totp-disable">
+          <div><label>Current code to turn OFF</label><input type="text" name="code" inputmode="numeric" required></div>
+          <div class="tight"><button class="button danger" type="submit">Disable</button></div>
+        </form>
+      {% else %}
+        <p><span class="badge mut">OFF</span> — protect your account with an authenticator app.</p>
+        <form method="post" action="/account/action">
+          <input type="hidden" name="_csrf" value="{{ csrf }}">
+          <input type="hidden" name="action" value="totp-setup">
+          <button class="button" type="submit">Set up TOTP</button>
+        </form>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0">Active sessions</h2>
+      <table>
+        <tr><th>IP</th><th>Browser</th><th>Last seen</th><th></th></tr>
+        {% for s in sessions %}
+        <tr>
+          <td class="mono">{{ s.ip }}</td>
+          <td class="mut" style="max-width:14rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.user_agent }}</td>
+          <td class="mut">{{ s.last_seen_at }}</td>
+          <td>
+            {% if s.id == current_session %}
+              <span class="badge ok">this one</span>
+            {% else %}
+              <form method="post" action="/account/action" class="inline">
+                <input type="hidden" name="_csrf" value="{{ csrf }}">
+                <input type="hidden" name="action" value="session-revoke">
+                <input type="hidden" name="session_id" value="{{ s.id }}">
+                <button class="button small danger" type="submit">Revoke</button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2 style="margin-top:0">API keys</h2>
+      <style>
+        .scopes-pick{display:flex;flex-wrap:wrap;gap:.4rem;margin:.35rem 0 0}
+        .scopes-pick label{display:inline-flex;align-items:center;gap:.4rem;cursor:pointer;
+          padding:.32rem .6rem;border:1px solid var(--line,#1c2b3d);border-radius:999px;
+          background:var(--bg-2,#0d1622);font-size:.82rem;user-select:none;transition:.12s}
+        .scopes-pick label:hover{border-color:var(--accent)}
+        .scopes-pick input{position:absolute;opacity:0;width:0;height:0}
+        .scopes-pick label:has(input:checked){background:var(--accent);border-color:var(--accent);color:#04121a;font-weight:600}
+        .scopes-pick .mono{font-size:.82rem}
+      </style>
+      <form method="post" action="/account/action">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="key-create">
+        <label>Name</label><input type="text" name="name" placeholder="autoseo" required>
+        <label style="margin-top:.8rem">Scopes <span class="mut">(pick what this key may do)</span></label>
+        <div class="scopes-pick">
+          {% for scope, desc in scope_catalog %}
+            {% if scope != 'admin' or user.role == 'admin' %}
+            <label title="{{ desc }}">
+              <input type="checkbox" name="scopes[]" value="{{ scope }}"
+                {{ scope in ['content:write', 'publish'] ? 'checked' }}>
+              <span class="mono">{{ scope }}</span>
+            </label>
+            {% endif %}
+          {% endfor %}
+        </div>
+        <div class="row" style="margin-top:.8rem">
+          <div><label>Sites <span class="mut">(handles comma-separated, or *)</span></label><input type="text" name="sites" value="*"></div>
+          <div class="tight"><button class="button" type="submit">Create key</button></div>
+        </div>
+      </form>
+      <table style="margin-top:1rem">
+        <tr><th>Name</th><th>Key</th><th>Scopes</th><th>Status</th><th></th></tr>
+        {% for k in keys %}
+        <tr>
+          <td>{{ k.name }}</td>
+          <td class="mono">fs_{{ k.key_id }}_…</td>
+          <td class="mut" style="max-width:12rem">{{ k.scopes }}</td>
+          <td>{% if k.revoked_at %}<span class="badge revoked">revoked</span>{% else %}<span class="badge ok">active</span>{% endif %}</td>
+          <td>
+            {% if not k.revoked_at %}
+            <form method="post" action="/account/action" class="inline">
+              <input type="hidden" name="_csrf" value="{{ csrf }}">
+              <input type="hidden" name="action" value="key-revoke">
+              <input type="hidden" name="key_id" value="{{ k.id }}">
+              <button class="button small danger" type="submit">Revoke</button>
+            </form>
+            {% else %}
+            <form method="post" action="/account/action" class="inline" data-confirm="Permanently delete this revoked key? This cannot be undone." data-confirm-title="Delete key" data-confirm-ok="Delete" data-confirm-danger>
+              <input type="hidden" name="_csrf" value="{{ csrf }}">
+              <input type="hidden" name="action" value="key-delete">
+              <input type="hidden" name="key_id" value="{{ k.id }}">
+              <button class="button small danger" type="submit">Delete</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="mut">No API keys.</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0">GitHub connections</h2>
+      <p class="mut" style="font-size:.85rem">Fine-grained personal access tokens used to publish your sites. Stored encrypted; never shown again. Create one at <span class="mono">github.com → Settings → Developer settings → Fine-grained tokens</span> with <strong>Contents: read &amp; write</strong> on the target repo, then select it on each site's Settings.</p>
+      <form method="post" action="/account/action" class="row">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="github-add">
+        <div><label>Label</label><input type="text" name="label" placeholder="rexultz deploy" required></div>
+        <div><label>Token</label><input type="password" name="token" placeholder="github_pat_…" autocomplete="off" required></div>
+        <div class="tight" style="align-self:end"><button class="button" type="submit">Save</button></div>
+      </form>
+      <table style="margin-top:1rem">
+        <tr><th>Label</th><th>Added</th><th>Last used</th><th></th></tr>
+        {% for c in github_creds %}
+        <tr>
+          <td>{{ c.label }}</td>
+          <td class="mut">{{ c.created_at }}</td>
+          <td class="mut">{{ c.last_used_at ?: 'never' }}</td>
+          <td>
+            <form method="post" action="/account/action" class="inline" data-confirm="Delete this GitHub credential? Sites using it fall back to the global token." data-confirm-title="Delete credential" data-confirm-ok="Delete" data-confirm-danger>
+              <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="github-delete"><input type="hidden" name="cred_id" value="{{ c.id }}">
+              <button class="button small danger" type="submit">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="mut">None — publishing uses the global token.</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+
+    {% macro model_opts(options, selected) %}{% for m in options %}<option value="{{ m }}" {{ m == selected ? 'selected' }}>{{ m }}</option>{% endfor %}{% endmacro %}
+    <div class="card">
+      <h2 style="margin-top:0">OpenRouter keys</h2>
+      <p class="mut" style="font-size:.85rem">Your <strong>OpenRouter</strong> API keys power the AI features (translation, fact-checking, auto-correct, topic research). Stored encrypted — only the first and last characters are shown. Get one at <span class="mono">openrouter.ai → Keys</span>, then select it per site in Settings. Pick the models for chat/translation, fact-checking, and research.</p>
+      <form method="post" action="/account/action" class="row">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="ai-add">
+        <div><label>Label</label><input type="text" name="label" placeholder="my openrouter" required></div>
+        <div><label>API key</label><input type="password" name="key" placeholder="sk-or-…" autocomplete="off" required></div>
+        <div><label>Model</label><select name="model">{{ _self.model_opts(or_models, ai_model_default) }}</select></div>
+        <div><label>Fact-check model</label><select name="factcheck_model">{{ _self.model_opts(or_models, ai_factcheck_default) }}</select></div>
+        <div><label>Research model</label><select name="research_model">{{ _self.model_opts(or_models, ai_research_default) }}</select></div>
+        <div class="tight" style="align-self:end"><button class="button" type="submit">Save</button></div>
+      </form>
+      <table style="margin-top:1rem">
+        <tr><th>Label</th><th>Key</th><th>Added</th><th>Last used</th><th></th></tr>
+        {% for c in ai_creds %}
+        <tr>
+          <td>{{ c.label }}</td>
+          <td class="mut mono">{{ c.key_hint ?: '••••' }}</td>
+          <td class="mut">{{ c.created_at }}</td>
+          <td class="mut">{{ c.last_used_at ?: 'never' }}</td>
+          <td style="white-space:nowrap">
+            <button type="button" class="button small ghost" data-modal-open="#ai-edit-{{ c.id }}">Edit</button>
+            <form method="post" action="/account/action" class="inline" data-confirm="Delete this AI key? Sites using it lose translation + fact-checking until another is selected." data-confirm-title="Delete AI key" data-confirm-ok="Delete" data-confirm-danger>
+              <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="ai-delete"><input type="hidden" name="cred_id" value="{{ c.id }}">
+              <button class="button small danger" type="submit">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="mut">None yet — add an OpenRouter key to enable the AI features.</td></tr>
+        {% endfor %}
+      </table>
+      {% for c in ai_creds %}
+      <dialog id="ai-edit-{{ c.id }}" class="modal">
+        <form method="post" action="/account/action">
+          <input type="hidden" name="_csrf" value="{{ csrf }}">
+          <input type="hidden" name="action" value="ai-edit">
+          <input type="hidden" name="cred_id" value="{{ c.id }}">
+          <div class="m-head"><h3>Edit AI key</h3></div>
+          <div class="m-body">
+            <label>Label</label><input type="text" name="label" value="{{ c.label }}" required>
+            <label>API key <span class="mut">(leave blank to keep {{ c.key_hint }})</span></label><input type="password" name="key" placeholder="•••• saved — blank keeps it" autocomplete="off">
+            <label>Model</label><select name="model">{{ _self.model_opts(or_models, c.model ?: ai_model_default) }}</select>
+            <label>Fact-check model</label><select name="factcheck_model">{{ _self.model_opts(or_models, c.factcheck_model ?: ai_factcheck_default) }}</select>
+            <label>Research model</label><select name="research_model">{{ _self.model_opts(or_models, c.research_model ?: ai_research_default) }}</select>
+          </div>
+          <div class="m-actions"><button type="button" class="button ghost small" data-modal-close>Cancel</button><button type="submit" class="button small">Save</button></div>
+        </form>
+      </dialog>
+      {% endfor %}
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0">Connected apps <span class="mut">(MCP / OAuth)</span></h2>
+      <table>
+        <tr><th>App</th><th>Connected</th><th></th></tr>
+        {% for a in apps %}
+        <tr>
+          <td>{{ a.client_name ?: a.client_id }}</td>
+          <td class="mut">{{ a.connected_at }}</td>
+          <td>
+            <form method="post" action="/account/action" class="inline">
+              <input type="hidden" name="_csrf" value="{{ csrf }}">
+              <input type="hidden" name="action" value="app-revoke">
+              <input type="hidden" name="client_id" value="{{ a.client_id }}">
+              <button class="button small danger" type="submit">Disconnect</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" class="mut">Nothing connected. Point Claude Desktop at {{ '/mcp' }} to connect.</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

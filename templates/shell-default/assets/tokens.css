@@ -1,0 +1,34 @@
+/* ── Design tokens ─────────────────────────────────────────────────────
+   Change these to re-theme the entire site. Every component reads from
+   these values. This default shell ships the fastsite "futuristic dark"
+   look; agents overwrite this file when designing a site. */
+:root {
+  /* surfaces */
+  --bg: #0a0f1a;
+  --bg-2: #111827;
+  --surface: #1a2235;
+  --border: rgba(255, 255, 255, 0.08);
+
+  /* text */
+  --text: #f1f5f9;
+  --text-2: #94a3b8;
+  --muted: #7d8da1;
+
+  /* brand */
+  --accent: #06d6a0;
+  --accent-hover: #05c090;
+  --cta: #f59e0b;
+
+  /* effects */
+  --glow: 0 0 20px rgba(6, 214, 160, 0.15);
+
+  /* shape & rhythm */
+  --radius: 12px;
+  --radius-sm: 6px;
+  --wrap: 72rem;
+  --reading: 42rem;
+
+  /* type — system stack: zero font downloads */
+  --font: ui-sans-serif, system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --mono: ui-monospace, 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
+}

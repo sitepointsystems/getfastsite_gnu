@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title|default('fastsite') }}</title>
+<meta name="robots" content="noindex">
+{% if brand.has_icon %}<link rel="icon" href="{{ brand.icon_url }}">{% endif %}
+<style>
+/* Brand accent = the logo blue; glow is blue. Backgrounds are cold slate
+   (green channel above red) so nothing reads violet. Success/warn/danger
+   stay semantic (green/amber/red) via --ok so status badges stay legible. */
+:root{--bg:#070d14;--bg-2:#0b1420;--surface:#101b28;--border:rgba(255,255,255,.09);--text:#eef4fb;--text-2:#9bb0c6;--muted:#7891a8;--accent:#2a86ff;--accent-hover:#1a74ee;--ok:#06d6a0;--warn:#f59e0b;--danger:#ef4444;--glow:0 0 28px rgba(42,134,255,.22);--radius:14px;--font:ui-sans-serif,system-ui,'Segoe UI',Roboto,sans-serif;--mono:ui-monospace,'Cascadia Mono','JetBrains Mono',Consolas,monospace}
+  *{scrollbar-width:thin;scrollbar-color:#2a3b52 transparent}
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#243247;border-radius:999px;border:2px solid transparent;background-clip:padding-box}
+  ::-webkit-scrollbar-thumb:hover{background:var(--accent);background-clip:padding-box}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:radial-gradient(120% 60% at 70% 0%,rgba(42,134,255,.10),transparent 60%),var(--bg);color:var(--text);font-family:var(--font);line-height:1.55;display:grid;grid-template-columns:15rem 1fr}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+.side{border-right:1px solid var(--border);padding:1.25rem 1rem;display:flex;flex-direction:column;gap:.25rem;position:sticky;top:0;height:100vh;overflow-y:auto}
+.brand{display:flex;align-items:center;gap:.55rem;font-weight:700;font-size:1.05rem;margin:0 0 1.25rem;color:var(--text)}
+.dot{width:.8rem;height:.8rem;border-radius:50%;background:var(--accent);box-shadow:0 0 12px var(--accent)}
+.brand-logo{display:block;height:1.9rem;width:auto;max-width:100%;margin:0 0 1.25rem}
+.brand img.mark{height:1.5rem;width:auto}
+.side a.nav{display:block;color:var(--text-2);padding:.45rem .65rem;border-radius:8px;font-size:.92rem}
+.side a.nav:hover{color:var(--text);background:var(--bg-2);text-decoration:none}
+.side a.nav.active{color:var(--text);background:var(--surface);border:1px solid var(--border)}
+.side .group{margin:.9rem 0 .25rem;font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);padding:0 .65rem}
+.side .push{margin-top:auto}
+.side .who{font-size:.8rem;color:var(--muted);padding:.5rem .65rem;border-top:1px solid var(--border)}
+main{padding:1.75rem 2rem;max-width:74rem;min-width:0}
+h1{font-size:1.45rem;letter-spacing:-.02em;margin:0 0 .35rem}
+h2{font-size:1.05rem;margin:2rem 0 .75rem;color:var(--text)}
+.sub{color:var(--text-2);margin:0 0 1.5rem;font-size:.93rem}
+.flash{border-radius:10px;padding:.7rem 1rem;font-size:.92rem;margin:0 0 1.25rem}
+.flash.ok{background:rgba(6,214,160,.1);border:1px solid rgba(6,214,160,.35);color:#7ce8c9}
+.flash.err{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:#fca5a5}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem 1.4rem;margin-bottom:1.25rem}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(17rem,1fr));gap:1rem}
+table{width:100%;border-collapse:collapse;font-size:.9rem}
+th{color:var(--muted);text-align:left;font-weight:600;font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;padding:.5rem .6rem;border-bottom:1px solid var(--border)}
+td{padding:.55rem .6rem;border-bottom:1px solid var(--border);color:var(--text-2);vertical-align:top}
+td:first-child,th:first-child{padding-left:0}
+tr:hover td{color:var(--text)}
+.badge{display:inline-block;border-radius:999px;padding:.1rem .6rem;font-size:.75rem;font-weight:600}
+.badge.ok,.badge.published,.badge.done,.badge.active,.badge.ready{background:rgba(6,214,160,.12);color:var(--ok)}
+.badge.warn,.badge.draft,.badge.pending,.badge.scheduled,.badge.running{background:rgba(245,158,11,.12);color:var(--warn)}
+.badge.err,.badge.failed,.badge.dead,.badge.archived,.badge.revoked,.badge.inactive{background:rgba(239,68,68,.12);color:var(--danger)}
+.badge.mut{background:var(--bg-2);color:var(--text-2)}
+label{display:block;font-size:.82rem;color:var(--text-2);margin:.9rem 0 .3rem}
+input[type=text],input[type=email],input[type=password],input[type=url],input[type=number],input[type=datetime-local],select,textarea{width:100%;background:var(--bg-2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:.6rem .75rem;font-size:.95rem;font-family:inherit}
+textarea.code{font-family:var(--mono);font-size:.82rem;min-height:20rem;white-space:pre;line-height:1.5}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
+.button{display:inline-block;background:var(--accent);color:#fff;font-weight:700;border:0;border-radius:8px;padding:.55rem 1.1rem;font-size:.9rem;cursor:pointer}
+.button:hover{background:var(--accent-hover)}
+.button.small{padding:.3rem .7rem;font-size:.8rem}
+.button.ghost{background:transparent;color:var(--text-2);border:1px solid var(--border)}
+.button.ghost:hover{color:var(--text)}
+.button.danger{background:transparent;color:var(--danger);border:1px solid rgba(239,68,68,.4)}
+.button.danger:hover{background:rgba(239,68,68,.1)}
+.row{display:flex;gap:1rem;align-items:flex-end;flex-wrap:wrap}
+.row>*{flex:1;min-width:10rem}
+.row>.tight{flex:0 0 auto;min-width:0}
+.inline{display:inline}
+.rowacts{display:flex;gap:.6rem;align-items:center;justify-content:flex-end}
+.mono{font-family:var(--mono);font-size:.82em}
+.mut{color:var(--muted)}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:.25rem 1.25rem;font-size:.9rem}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;color:var(--text-2)}
+.sitenav{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center;margin:0 0 1.25rem}
+.sitenav-gap{flex:1}
+.tabs{display:flex;gap:.5rem;margin:0 0 1rem;border-bottom:1px solid var(--border);padding-bottom:.6rem}
+.tabs a{color:var(--text-2);padding:.3rem .8rem;border-radius:8px;font-size:.9rem}
+.tabs a.active{background:var(--surface);color:var(--text);border:1px solid var(--border)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:1.25rem;align-items:start}
+@media(max-width:900px){body{grid-template-columns:1fr}.side{position:static;height:auto;flex-direction:row;flex-wrap:wrap}.grid2{grid-template-columns:1fr}}
+.filetree{list-style:none;margin:0;padding:0;font-family:var(--mono);font-size:.82rem}
+.filetree li{padding:.15rem 0}
+details summary{cursor:pointer;color:var(--text-2)}
+/* Real modals (no alert/confirm) */
+dialog.modal{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);padding:0;max-width:min(42rem,92vw);width:100%;box-shadow:0 24px 60px rgba(0,0,0,.55)}
+dialog.modal::backdrop{background:rgba(3,7,12,.64)}
+dialog.modal.wide{max-width:min(78rem,96vw)}
+dialog.modal .m-head{padding:1.2rem 1.4rem .2rem}
+dialog.modal h3{margin:0 0 .4rem;font-size:1.1rem}
+dialog.modal .m-body{padding:.4rem 1.4rem 1.2rem}
+dialog.modal .m-scroll{max-height:60vh;overflow:auto}
+dialog.modal .m-actions{display:flex;justify-content:flex-end;gap:.6rem;padding:1rem 1.4rem;border-top:1px solid var(--border)}
+dialog.modal input[type=text]{margin-top:.5rem}
+/* Kebab overflow menu */
+.kebab{position:relative;display:inline-block}
+.kebab-trigger{background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--text-2);cursor:pointer;padding:.3rem .6rem;font-size:1rem;line-height:1}
+.kebab-trigger:hover{color:var(--text);border-color:var(--accent)}
+.kebab-menu{position:absolute;right:0;top:calc(100% + .3rem);z-index:30;min-width:12rem;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 14px 34px rgba(0,0,0,.45);padding:.3rem;display:none}
+.kebab.open .kebab-menu{display:block}
+.kebab-menu a,.kebab-menu button{display:block;width:100%;text-align:left;background:none;border:0;color:var(--text-2);padding:.45rem .6rem;border-radius:7px;font:inherit;font-size:.85rem;cursor:pointer}
+.kebab-menu a:hover,.kebab-menu button:hover{background:var(--bg-2);color:var(--text)}
+.kebab-menu form{margin:0}
+.kebab-menu .danger-zone{margin-top:.3rem;padding-top:.35rem;border-top:1px solid var(--border)}
+.kebab-menu .danger-zone .zone-label{font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);padding:.1rem .6rem .2rem}
+.kebab-menu .danger-zone button{color:var(--danger)}
+.kebab-menu .danger-zone button:hover{background:rgba(239,68,68,.1);color:var(--danger)}
+/* Site switcher: a custom dropdown (thumbnail + name) that persists selection
+   across pages, with a small button to enter the site's content area. */
+.siteswitch{display:flex;gap:.4rem;align-items:stretch;margin:.15rem 0 .35rem}
+.ss-dd{position:relative;flex:1;min-width:0}
+.ss-dd>summary{list-style:none;display:flex;align-items:center;gap:.5rem;cursor:pointer;background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:.35rem .5rem;color:var(--text)}
+.ss-dd>summary::-webkit-details-marker{display:none}
+.ss-dd>summary:hover{border-color:var(--accent)}
+.ss-current{display:flex;align-items:center;gap:.5rem;min-width:0;flex:1}
+.ss-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.9rem}
+.ss-caret{opacity:.6;font-size:.8em;flex:0 0 auto}
+.savatar{position:relative;width:1.5rem;height:1.5rem;flex:0 0 auto;border-radius:5px;background:var(--accent);color:#fff;font-size:.72rem;font-weight:700;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.savatar img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.ss-panel{display:none;position:absolute;top:calc(100% + .3rem);left:0;right:0;z-index:40;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 14px 34px rgba(0,0,0,.45);padding:.3rem;max-height:60vh;overflow:auto}
+.ss-dd[open] .ss-panel{display:block}
+.ss-opt{display:flex;align-items:center;gap:.5rem;width:100%;text-align:left;background:none;border:0;color:var(--text-2);padding:.4rem .5rem;border-radius:7px;cursor:pointer;font:inherit}
+.ss-opt:hover{background:var(--bg-2);color:var(--text)}
+.ss-opt.sel{color:var(--text);background:var(--bg-2)}
+.ss-enter{flex:0 0 auto;display:flex;align-items:center;justify-content:center;padding:.35rem .65rem;text-decoration:none;font-size:1rem;line-height:1}
+</style>
+</head>
+<body>
+<nav class="side">
+  {% if brand.has_logo %}
+    <a href="/"><img class="brand-logo" src="{{ brand.logo_url }}" alt="FastSite"></a>
+  {% elseif brand.has_icon %}
+    <p class="brand"><img class="mark" src="{{ brand.icon_url }}" alt=""> FastSite</p>
+  {% else %}
+    <p class="brand"><span class="dot"></span> fastsite</p>
+  {% endif %}
+  {% if nav_sites|length %}
+    <div class="group">Your sites</div>
+    <div class="siteswitch" data-siteswitch data-current="{{ current_site }}">
+      <details class="ss-dd">
+        <summary>
+          <span class="ss-current">
+            {% if current_site %}
+              {%- for s in nav_sites|filter(s => s.handle == current_site) -%}
+              <span class="savatar">{{ s.name|first|upper }}<img src="/sites/{{ s.handle }}/card.png" alt="" onerror="this.remove()"></span>
+              <span class="ss-name">{{ s.name }}</span>
+              {%- endfor -%}
+            {% else %}
+              <span class="ss-name mut">Select a site…</span>
+            {% endif %}
+          </span>
+          <span class="ss-caret" aria-hidden="true">&#9662;</span>
+        </summary>
+        <div class="ss-panel">
+          {% for s in nav_sites %}
+            <button type="button" class="ss-opt {{ s.handle == current_site ? 'sel' }}" data-ss-opt data-handle="{{ s.handle }}">
+              <span class="savatar">{{ s.name|first|upper }}<img src="/sites/{{ s.handle }}/card.png" alt="" onerror="this.remove()"></span>
+              <span class="ss-name">{{ s.name }}</span>
+            </button>
+          {% endfor %}
+        </div>
+      </details>
+      <a class="button small ss-enter" id="ss-enter" href="/sites/{{ current_site ?: (nav_sites|first).handle }}/content" title="Open content" aria-label="Open content">&#8594;</a>
+    </div>
+  {% endif %}
+  <a class="nav {{ path == '/' ? 'active' }}" href="/">All Sites</a>
+  <div class="group">You</div>
+  <a class="nav {{ path == '/account' ? 'active' }}" href="/account">Account</a>
+  <a class="nav {{ path == '/teams' ? 'active' }}" href="/teams">Teams</a>
+  {% if user.role == 'admin' %}
+    <div class="group">Admin</div>
+    <a class="nav {{ path == '/admin/users' ? 'active' }}" href="/admin/users">Users</a>
+    <a class="nav {{ path == '/admin/sites' ? 'active' }}" href="/admin/sites">Sites &amp; webhooks</a>
+    <a class="nav {{ path == '/admin/ops' ? 'active' }}" href="/admin/ops">Operations</a>
+    <a class="nav {{ path == '/admin/access' ? 'active' }}" href="/admin/access">Access</a>
+  {% endif %}
+  <div class="push"></div>
+  <div class="who">
+    {{ user.name|default(user.email) }}<br>
+    <form method="post" action="/logout" class="inline">
+      <input type="hidden" name="_csrf" value="{{ csrf }}">
+      <button class="button ghost small" type="submit" style="margin-top:.4rem">Sign out</button>
+    </form>
+  </div>
+</nav>
+<main>
+{% if flash_ok %}<div class="flash ok">{{ flash_ok }}</div>{% endif %}
+{% if flash_err %}<div class="flash err">{{ flash_err }}</div>{% endif %}
+{% block body %}{% endblock %}
+</main>
+
+<dialog id="fs-confirm" class="modal">
+  <form method="dialog" class="m-head"><h3 id="fs-confirm-title">Confirm</h3></form>
+  <div class="m-body">
+    <p id="fs-confirm-msg" class="mut" style="margin:.2rem 0 0"></p>
+    <div id="fs-confirm-match-wrap" hidden>
+      <label id="fs-confirm-match-label" style="margin-top:.6rem"></label>
+      <input type="text" id="fs-confirm-match" autocomplete="off">
+    </div>
+  </div>
+  <div class="m-actions">
+    <button type="button" class="button ghost small" id="fs-confirm-cancel">Cancel</button>
+    <button type="button" class="button small" id="fs-confirm-ok">Confirm</button>
+  </div>
+</dialog>
+
+<dialog id="fs-busy" class="modal">
+  <div class="m-body" style="display:flex;align-items:center;gap:.7rem;padding:1.1rem 1.3rem">
+    <span class="fs-spin" aria-hidden="true"></span>
+    <span id="fs-busy-msg">Working…</span>
+  </div>
+</dialog>
+<style>
+  .fs-spin{width:1.1rem;height:1.1rem;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;display:inline-block;animation:fs-spin .7s linear infinite;flex:0 0 auto}
+  @keyframes fs-spin{to{transform:rotate(360deg)}}
+</style>
+
+<script>
+(function(){
+  var dlg = document.getElementById('fs-confirm');
+  var titleEl = document.getElementById('fs-confirm-title');
+  var msgEl = document.getElementById('fs-confirm-msg');
+  var okBtn = document.getElementById('fs-confirm-ok');
+  var cancelBtn = document.getElementById('fs-confirm-cancel');
+  var matchWrap = document.getElementById('fs-confirm-match-wrap');
+  var matchLabel = document.getElementById('fs-confirm-match-label');
+  var matchInput = document.getElementById('fs-confirm-match');
+  var pending = null;
+
+  function close(){ pending = null; if (dlg.open) dlg.close(); }
+  cancelBtn.addEventListener('click', close);
+  dlg.addEventListener('cancel', function(e){ e.preventDefault(); close(); });
+  dlg.addEventListener('click', function(e){ if (e.target === dlg) close(); }); // backdrop
+
+  okBtn.addEventListener('click', function(){
+    if (!pending) return;
+    var form = pending.form;
+    if (pending.match){
+      if (matchInput.value.trim() !== pending.match){
+        matchInput.style.outline = '2px solid var(--danger)';
+        return;
+      }
+      // Carry the typed value into the form so the server enforces it too.
+      var target = form.querySelector('[data-confirm-input]');
+      if (target) target.value = matchInput.value.trim();
+    }
+    close();
+    form.dataset.fsConfirmed = '1';
+    if (typeof form.requestSubmit === 'function') form.requestSubmit(); else form.submit();
+  });
+
+  function open(form){
+    pending = {
+      form: form,
+      match: form.dataset.confirmMatch || ''
+    };
+    titleEl.textContent = form.dataset.confirmTitle || 'Please confirm';
+    msgEl.textContent = form.dataset.confirm || 'Are you sure?';
+    okBtn.textContent = form.dataset.confirmOk || 'Confirm';
+    okBtn.className = 'button small' + (form.hasAttribute('data-confirm-danger') ? ' danger' : '');
+    if (pending.match){
+      matchWrap.hidden = false;
+      matchLabel.textContent = form.dataset.confirmMatchLabel || ('Type "' + pending.match + '" to confirm');
+      matchInput.value = ''; matchInput.style.outline = '';
+    } else { matchWrap.hidden = true; }
+    dlg.showModal();
+    if (pending.match) matchInput.focus();
+  }
+
+  document.querySelectorAll('form[data-confirm]').forEach(function(form){
+    form.addEventListener('submit', function(e){
+      if (form.dataset.fsConfirmed) return;
+      e.preventDefault();
+      open(form);
+    });
+  });
+
+  // Busy overlay for slow synchronous POSTs: <form data-busy="Checking with …">.
+  // Registered AFTER the confirm handler so a confirm-gated form only shows the
+  // overlay once the submit actually proceeds (defaultPrevented is false then).
+  var busyDlg = document.getElementById('fs-busy');
+  var busyMsg = document.getElementById('fs-busy-msg');
+  document.querySelectorAll('form[data-busy]').forEach(function(form){
+    form.addEventListener('submit', function(e){
+      if (e.defaultPrevented) return; // a confirm dialog is up — not submitting yet
+      busyMsg.textContent = form.dataset.busy || 'Working…';
+      form.querySelectorAll('button[type=submit]').forEach(function(b){ b.disabled = true; });
+      if (busyDlg && typeof busyDlg.showModal === 'function') busyDlg.showModal();
+    });
+  });
+
+  // Open a content dialog by id: <button data-modal-open="#some-dialog">
+  document.querySelectorAll('[data-modal-open]').forEach(function(t){
+    t.addEventListener('click', function(e){
+      e.preventDefault();
+      var d = document.querySelector(t.getAttribute('data-modal-open'));
+      if (d && typeof d.showModal === 'function') d.showModal();
+    });
+  });
+  // Content dialogs: close on backdrop, and any [data-modal-close] button.
+  document.querySelectorAll('dialog.modal').forEach(function(d){
+    d.addEventListener('click', function(e){ if (e.target === d) d.close(); });
+    d.querySelectorAll('[data-modal-close]').forEach(function(b){
+      b.addEventListener('click', function(){ d.close(); });
+    });
+  });
+  // Auto-open a dialog on load: <dialog data-modal-auto>
+  document.querySelectorAll('dialog.modal[data-modal-auto]').forEach(function(d){
+    if (typeof d.showModal === 'function') d.showModal();
+  });
+
+  // Kebab menus: <div class="kebab"><button class="kebab-trigger" data-kebab>⋮</button><div class="kebab-menu">…</div></div>
+  document.querySelectorAll('[data-kebab]').forEach(function(t){
+    t.addEventListener('click', function(e){
+      e.preventDefault(); e.stopPropagation();
+      var k = t.closest('.kebab');
+      var wasOpen = k.classList.contains('open');
+      document.querySelectorAll('.kebab.open').forEach(function(o){ o.classList.remove('open'); });
+      if (!wasOpen) k.classList.add('open');
+    });
+  });
+  document.addEventListener('click', function(){ document.querySelectorAll('.kebab.open').forEach(function(o){ o.classList.remove('open'); }); });
+
+  // Site switcher: picking a site persists it across pages (fs_site cookie) and
+  // updates the trigger + the → button; the button navigates into its content.
+  (function(){
+    var sw = document.querySelector('[data-siteswitch]');
+    if (!sw) return;
+    function setCookie(h){ document.cookie = 'fs_site=' + encodeURIComponent(h) + ';path=/;max-age=31536000;samesite=lax'; }
+    var activeHandle = sw.getAttribute('data-current');
+    if (activeHandle) setCookie(activeHandle); // keep the cookie synced to the page you're on
+    var dd = sw.querySelector('.ss-dd');
+    var enter = sw.querySelector('#ss-enter');
+    var current = sw.querySelector('.ss-current');
+    sw.querySelectorAll('[data-ss-opt]').forEach(function(opt){
+      opt.addEventListener('click', function(){
+        var h = opt.getAttribute('data-handle');
+        setCookie(h);
+        if (current) current.innerHTML = opt.innerHTML;
+        if (enter) enter.setAttribute('href', '/sites/' + h + '/content');
+        sw.querySelectorAll('.ss-opt.sel').forEach(function(o){ o.classList.remove('sel'); });
+        opt.classList.add('sel');
+        if (dd) dd.removeAttribute('open');
+      });
+    });
+  })();
+})();
+</script>
+</body>
+</html>

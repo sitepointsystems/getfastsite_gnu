@@ -1,0 +1,17 @@
+{
+    "version": "0.0.1",
+    "configurations": [
+        {
+            "name": "demo-preview",
+            "runtimeExecutable": "php",
+            "runtimeArgs": ["-S", "127.0.0.1:8931", "-t", "var/data/sites/demo/build"],
+            "port": 8931
+        },
+        {
+            "name": "engine",
+            "runtimeExecutable": "php",
+            "runtimeArgs": ["-S", "127.0.0.1:8930", "-t", "public", "public/router.php"],
+            "port": 8930
+        }
+    ]
+}

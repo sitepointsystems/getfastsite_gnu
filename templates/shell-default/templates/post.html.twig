@@ -1,0 +1,19 @@
+{% extends 'base.html.twig' %}
+
+{% block main %}
+<article class="section article">
+  <div class="wrap reading">
+    <header class="article-header">
+      <h1>{{ content.title }}</h1>
+      <p class="article-meta">
+        {% if content.published_at %}<time datetime="{{ content.published_at }}">{{ content.published_at|date('M j, Y') }}</time>{% endif %}
+        {% if content.author_name %} · {{ content.author_name }}{% endif %}
+      </p>
+    </header>
+    {% if content.featured_html %}<figure class="article-featured">{{ content.featured_html|raw }}</figure>{% endif %}
+    <div class="article-body">
+      {{ content.body_html|raw }}
+    </div>
+  </div>
+</article>
+{% endblock %}
