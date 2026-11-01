@@ -7,7 +7,7 @@ namespace Fastsite\Dashboard\Handler;
 use Fastsite\Dashboard\Middleware\SessionAuthMiddleware;
 use Fastsite\Identity\Service\RememberTokenService;
 use Fastsite\Identity\Service\SessionService;
-use Nyholm\Psr7\Response;
+use GuzzleHttp\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;

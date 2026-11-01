@@ -17,12 +17,25 @@ final class OpenRouterModels
     private const TTL = 86400;
     private const ENDPOINT = 'https://openrouter.ai/api/v1/models';
 
-    /** Always offered even if the fetch fails, and always merged in. */
+    /**
+     * Always offered even if the fetch fails, and always merged in.
+     *
+     * These are MERGED INTO the live catalogue, so a stale id here is not
+     * harmless — it stays in the dropdown forever and a user can pick a model
+     * that no longer exists, which fails at translate time with an unhelpful
+     * provider error. Five of these were dead (`claude-sonnet-latest`,
+     * `claude-opus-latest`, `claude-3.5-haiku`, `gemini-2.0-flash-001`,
+     * `sonar-reasoning`); OpenRouter now prefixes floating aliases with `~`,
+     * which is why the un-prefixed `…-latest` ids stopped resolving. Re-check
+     * against https://openrouter.ai/api/v1/models when touching this list.
+     */
     private const FALLBACK = [
-        'anthropic/claude-sonnet-latest', 'anthropic/claude-opus-latest', 'anthropic/claude-3.5-haiku',
+        '~anthropic/claude-sonnet-latest', '~anthropic/claude-opus-latest', '~anthropic/claude-haiku-latest',
+        'anthropic/claude-haiku-4.5',
         'openai/gpt-4o', 'openai/gpt-4o-mini', 'openai/o3-mini',
-        'google/gemini-2.0-flash-001', 'meta-llama/llama-3.3-70b-instruct',
-        'perplexity/sonar', 'perplexity/sonar-pro', 'perplexity/sonar-reasoning',
+        'google/gemini-2.5-flash', 'google/gemini-2.5-flash-lite',
+        'meta-llama/llama-3.3-70b-instruct',
+        'perplexity/sonar', 'perplexity/sonar-pro',
     ];
 
     public function __construct(private readonly Client $redis)

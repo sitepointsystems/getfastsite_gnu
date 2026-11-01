@@ -134,8 +134,8 @@ final class SiteScriptServiceTest extends TestCase
     {
         // Embed loaders configure themselves via data-* attributes on their
         // own <script> tag — the full save→DB→render path must be byte-exact.
-        $snippet = '<script src="https://app.rexultz.com/embed/r.js"' . "\n"
-            . '        data-rexultz-key="fa7cb628-aa26-47ac-8973-13d8a8133a8b"' . "\n"
+        $snippet = '<script src="https://widget.example.com/embed/w.js"' . "\n"
+            . '        data-widget-key="fa7cb628-aa26-47ac-8973-13d8a8133a8b"' . "\n"
             . '        defer' . "\n"
             . '        crossorigin' . "\n"
             . '        ></script>';
@@ -143,7 +143,7 @@ final class SiteScriptServiceTest extends TestCase
 
         $head = $this->scripts->renderByLocation('stest')['head'];
         self::assertStringContainsString($snippet, $head);
-        self::assertStringContainsString('data-rexultz-key="fa7cb628-aa26-47ac-8973-13d8a8133a8b"', $head);
+        self::assertStringContainsString('data-widget-key="fa7cb628-aa26-47ac-8973-13d8a8133a8b"', $head);
     }
 
     public function testRenderSnippetIsVerbatim(): void

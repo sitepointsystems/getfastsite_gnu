@@ -1,0 +1,104 @@
+    <div class="card">
+      <details>
+        <summary style="font-weight:600;font-size:1.05rem">Header / footer scripts <span class="mut" style="font-weight:400">({{ scripts|length }})</span></summary>
+      <p class="mut" style="font-size:.85rem">Analytics, chat widgets, pixels. Paste a snippet (injected verbatim) or a script URL (loaded with the chosen strategy). <strong>A script opts out the pages it lands on</strong> — those pages get a relaxed CSP; every page it does not target keeps <span class="mono">script-src 'none'</span> and its 100/100/100/100. Target by type, then narrow with slugs; slugs are primary-language slugs (the home page is <span class="mono">home</span>, the blog index <span class="mono">blog</span>), so one rule covers every locale.</p>
+      <table>
+        <tr><th>Label</th><th>Where</th><th>Applies to</th><th>How</th><th>Prio</th><th>On</th><th></th></tr>
+        {% for s in scripts %}
+        <tr>
+          <td>
+            {{ s.label ?: '(no label)' }}
+            {% if s.id in scripts_wrapped %}
+              <div class="mut" style="font-size:.78rem;margin-top:.15rem">
+                ⚠ JavaScript outside a <span class="mono">&lt;script&gt;</span> tag — the build wraps it so it runs.
+              </div>
+            {% endif %}
+          </td>
+          <td class="mut mono">{{ s.location }}</td>
+          <td class="mut" style="font-size:.85rem">
+            {% if s.isSiteWide %}every page{% else %}{{ s.target == 'all' ? 'posts + pages' : 'all ' ~ s.target }}{% endif %}
+            {% if s.includeSlugs|length %}<div class="mut" style="font-size:.78rem">only: {{ s.includeSlugs|join(', ') }}</div>{% endif %}
+            {% if s.excludeSlugs|length %}<div class="mut" style="font-size:.78rem">not: {{ s.excludeSlugs|join(', ') }}</div>{% endif %}
+          </td>
+          <td class="mut mono">{{ s.strategy }}</td>
+          <td class="mut">{{ s.priority }}</td>
+          <td>{% if s.enabled %}<span class="badge ok">on</span>{% else %}<span class="badge mut">off</span>{% endif %}</td>
+          <td style="white-space:nowrap">
+            <button type="button" class="button small ghost" data-script-edit
+              data-id="{{ s.id }}" data-label="{{ s.label }}" data-location="{{ s.location }}"
+              data-strategy="{{ s.strategy }}" data-priority="{{ s.priority }}"
+              data-enabled="{{ s.enabled ? 1 : 0 }}" data-code="{{ s.code }}"
+              data-target="{{ s.target }}" data-include="{{ s.includeSlugs|join(', ') }}" data-exclude="{{ s.excludeSlugs|join(', ') }}">Edit</button>
+            <form method="post" action="/sites/{{ site.handle }}/settings/action" class="inline" onsubmit="return confirm('Delete this script?')">
+              <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="tab" value="{{ tab }}"><input type="hidden" name="action" value="script-delete"><input type="hidden" name="id" value="{{ s.id }}">
+              <button class="button small ghost" type="submit">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="mut">No scripts — the site ships zero JS.</td></tr>
+        {% endfor %}
+      </table>
+      <details style="margin-top:1rem" id="script-form-details">
+        <summary style="cursor:pointer" id="script-form-summary">Add a script</summary>
+        <form method="post" action="/sites/{{ site.handle }}/settings/action" style="margin-top:.6rem" id="script-form">
+          <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="tab" value="{{ tab }}">
+          <input type="hidden" name="action" value="script-save">
+          <input type="hidden" name="id" value="">
+          <div class="row">
+            <div><label>Label</label><input type="text" name="label" placeholder="Google Analytics"></div>
+            <div class="tight"><label>Location</label>
+              <select name="location">
+                <option value="head">head</option><option value="body_open">body open</option><option value="body_end">body end</option>
+              </select>
+            </div>
+            <div class="tight"><label>Strategy</label>
+              <select name="strategy"><option value="defer">defer</option><option value="async">async</option><option value="blocking">blocking</option></select>
+            </div>
+            <div class="tight"><label>Priority</label><input type="number" name="priority" value="100" size="4"></div>
+          </div>
+          <div class="row">
+            <div class="tight"><label>Applies to</label>
+              <select name="target">
+                <option value="all">Every page</option>
+                <option value="posts">Posts only</option>
+                <option value="pages">Pages only</option>
+              </select>
+            </div>
+            <div><label>Only these slugs <span class="mut">(optional, comma-separated — empty = every targeted page)</span></label><input type="text" name="include_slugs" placeholder=""></div>
+            <div><label>Never these slugs <span class="mut">(comma-separated)</span></label><input type="text" name="exclude_slugs" placeholder="home, blog"></div>
+          </div>
+          <label>Code <span class="mut">(a &lt;script&gt;…&lt;/script&gt; snippet, or just a script URL)</span></label>
+          <textarea name="code" class="code" style="min-height:8rem"></textarea>
+          <p style="margin:.8rem 0 0">
+            <label style="display:inline-flex;align-items:center;gap:.5rem"><input type="checkbox" name="enabled" value="1" checked> enabled</label>
+            <button class="button" type="submit" style="margin-left:1rem">Save script</button>
+          </p>
+        </form>
+      </details>
+      <script>
+      // Edit = pre-fill the save form with the row's values; the backend's
+      // script-save updates in place when an id is present.
+      document.querySelectorAll('[data-script-edit]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var f = document.getElementById('script-form');
+          f.querySelector('[name=id]').value = btn.dataset.id;
+          f.querySelector('[name=label]').value = btn.dataset.label;
+          f.querySelector('[name=location]').value = btn.dataset.location;
+          f.querySelector('[name=strategy]').value = btn.dataset.strategy;
+          f.querySelector('[name=priority]').value = btn.dataset.priority;
+          f.querySelector('[name=code]').value = btn.dataset.code;
+          f.querySelector('[name=enabled]').checked = btn.dataset.enabled === '1';
+          f.querySelector('[name=target]').value = btn.dataset.target;
+          f.querySelector('[name=include_slugs]').value = btn.dataset.include;
+          f.querySelector('[name=exclude_slugs]').value = btn.dataset.exclude;
+          document.getElementById('script-form-details').open = true;
+          document.getElementById('script-form-summary').textContent =
+            'Edit script — ' + (btn.dataset.label || '(no label)');
+          f.scrollIntoView({behavior: 'smooth', block: 'center'});
+          f.querySelector('[name=code]').focus();
+        });
+      });
+      </script>
+      </details>
+    </div>

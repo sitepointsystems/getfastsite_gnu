@@ -2,8 +2,12 @@
 
 {% block body %}
 <style>
-  .linkbtn{background:none;border:0;padding:0;font:inherit;color:var(--accent);cursor:pointer;text-decoration:underline}
+  .linkbtn{background:none;border:0;padding:0;font:inherit;line-height:1.3;white-space:nowrap;color:var(--accent);cursor:pointer;text-decoration:underline}
   .linkbtn.danger{color:var(--danger)}
+  /* Same alignment fix as the media tiles: a <form> flex child stretches
+     taller than a bare <label> and knocks the row out of line. */
+  .rowacts{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center;line-height:1.3}
+  .rowacts form{display:flex;align-items:center;margin:0}
 </style>
 <h1>{{ site.name }}</h1>
 <p class="sub">Files — any type, served from <span class="mono">/files/</span> with immutable caching. Embed with <span class="mono">{{ '{{ filename }}' }}</span>: HTML/JS files are inlined and run (trusted — not sanitized); PDF/ZIP/other show a download link.</p>
@@ -21,12 +25,25 @@
   <h2 style="margin-top:0">Add file</h2>
   <form method="post" action="/sites/{{ site.handle }}/files/action" enctype="multipart/form-data">
     <input type="hidden" name="_csrf" value="{{ csrf }}">
-    <div class="row">
-      <div><label>File <span class="mut">(any type — html/js widgets, pdf, docs, csv, fonts, archives, audio…)</span></label><input type="file" name="file"></div>
-      <div class="tight" style="align-self:end"><button class="button" type="submit">Upload</button></div>
-    </div>
+    <label class="fs-drop" data-upload-drop>
+      <input type="file" name="files[]" multiple hidden data-upload-input>
+      <span class="fs-drop-icon" aria-hidden="true">⬆</span>
+      <span class="fs-drop-main">Drop files here or <u>choose files</u></span>
+      <span class="fs-drop-sub">Any type — html/js widgets, pdf, docs, csv, fonts, archives, audio · several at once.</span>
+    </label>
+    <noscript>
+      <style>[data-upload-drop]{display:none}</style>
+      <div class="row" style="align-items:end">
+        <div><label>File(s)</label><input type="file" name="files[]" multiple></div>
+        <div class="tight"><button class="button" type="submit">Upload</button></div>
+      </div>
+    </noscript>
   </form>
 </div>
+{% include 'upload-dialog.html.twig' with {
+  upload_endpoint: '/sites/' ~ site.handle ~ '/files/action',
+  upload_hint: 'processing…'
+} %}
 {% endif %}
 
 <table>
@@ -50,6 +67,9 @@
           <button class="linkbtn danger" type="submit">purge</button>
         </form>
       {% else %}
+        {# Same id, same {{ '{{ filename }}' }} embed, new content. One line:
+           whitespace inside the label renders as a text node and shifts the row. #}
+        <label class="linkbtn" title="Upload a new file to replace this one, keeping #{{ m.id }} and every embed that points at it">replace<input type="file" hidden data-upload-input data-upload-extra='{"action":"replace","id":"{{ m.id }}"}'></label>
         <form method="post" action="/sites/{{ site.handle }}/files/action" class="inline" onsubmit="return confirm('Move #{{ m.id }} to trash?')">
           <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="{{ m.id }}">
           <button class="linkbtn danger" type="submit">delete</button>

@@ -1,0 +1,186 @@
+    {% if can_manage %}
+    <div class="card">
+      <h2 style="margin-top:0">Go live</h2>
+      <p class="mut" style="font-size:.88rem;margin-bottom:.4rem">Attach <span class="mono">{{ site.primaryDomain ?: 'your domain' }}</span> to the serving mode chosen above. Each path is a few minutes, once.</p>
+      {# Hooking up the domain is not the same as being findable, and the two
+         read identically from here. Say so, or a site sits on its real domain
+         wearing a noindex nobody thinks to look for. #}
+      {% if site.development %}<p style="font-size:.88rem;margin:.2rem 0 .8rem;color:var(--warn)">This site is still in <strong>development</strong>, so even once the domain resolves every page ships <span class="mono">noindex, nofollow</span> and Google will not index it. Turn that off under <a href="?tab=general"><em>Development status</em></a> on the General tab when you are ready to be found.</p>{% endif %}
+
+      <details {{ site.serveMode == 'git' ? 'open' }}>
+        <summary style="font-weight:600;font-size:1.02rem">Cloudflare Pages <span class="mut" style="font-weight:400">(Git → CDN)</span></summary>
+        <div style="margin-top:.8rem">
+          <p class="mut" style="font-size:.86rem;margin:0 0 .5rem"><strong>Automatic:</strong> paste an API token and the engine creates the Pages project from your repo, attaches the domain, and adds the DNS (when the zone is on your account). The one-time GitHub connection is the single click Cloudflare requires from you — the result message links straight to it if it's missing.</p>
+          <form method="post" action="/sites/{{ site.handle }}/settings/action" class="row">
+            <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="tab" value="{{ tab }}">
+            <input type="hidden" name="action" value="cf-pages-setup">
+            <div><input type="password" name="cf_api_token" autocomplete="off" placeholder="{{ site.cfApiTokenEnc ? '•••••••• (saved — leave blank to reuse)' : 'paste a Cloudflare API token' }}"></div>
+            <div class="tight" style="align-self:end"><button class="button" type="submit" data-busy="Talking to Cloudflare…">Set up Cloudflare Pages</button></div>
+            <div class="tight" style="align-self:end"><button type="button" class="button ghost small" data-modal-open="#cf-token-help">How do I get the token?</button></div>
+            {% if site.cfApiTokenEnc %}<div class="tight" style="align-self:end"><label style="margin:0;font-size:.82rem"><input type="checkbox" name="cf_clear" value="1"> remove token</label></div>{% endif %}
+          </form>
+          {% if site.cfApiTokenEnc %}<p class="mut" style="font-size:.8rem;margin:.3rem 0 0"><span style="color:var(--ok)">✓ Token saved</span> — stored encrypted, never re-displayed. Leave the field blank to reuse it.</p>{% endif %}
+          <dialog id="cf-token-help" class="modal">
+            <div class="m-head"><h3>How to get the Cloudflare API token</h3></div>
+            <div class="m-body m-scroll" style="font-size:.9rem;line-height:1.7">
+              <ol style="margin:.2rem 0 0;padding-left:1.3rem">
+                <li>Open <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noopener"><strong>dash.cloudflare.com/profile/api-tokens</strong></a> — that link goes straight to <span class="mut">My Profile → API Tokens</span> (log in if asked).</li>
+                <li>Click <strong>Create Token</strong>, scroll to the bottom, and under <strong>Custom token</strong> click <strong>Get started</strong>.</li>
+                <li>Name it anything, e.g. <span class="mono">fastsite</span>.</li>
+                <li>Under <strong>Permissions</strong>, add these three rows (use <strong>+ Add more</strong>):
+                  <ul style="margin:.2rem 0;padding-left:1.2rem">
+                    <li><span class="mono">Account · Cloudflare Pages · Edit</span></li>
+                    <li><span class="mono">Zone · Zone · Read</span></li>
+                    <li><span class="mono">Zone · DNS · Edit</span></li>
+                  </ul>
+                </li>
+                <li>Under <strong>Account Resources</strong> pick your account; under <strong>Zone Resources</strong> pick <strong>All zones</strong> (or just <span class="mono">{{ site.primaryDomain ?: 'your domain' }}</span> if the domain is already on Cloudflare).</li>
+                <li>Click <strong>Continue to summary</strong> → <strong>Create Token</strong>.</li>
+                <li>Copy the token — Cloudflare shows it <em>only once</em> — paste it in the field here, and click <strong>Set up Cloudflare Pages</strong>.</li>
+              </ol>
+              <p class="mut" style="font-size:.84rem;margin:.8rem 0 0">The token is stored encrypted and only used to talk to Cloudflare on your behalf. You can revoke it any time on the same API Tokens page.</p>
+            </div>
+            <div class="m-actions">
+              <a class="button ghost small" href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noopener">Open Cloudflare API Tokens ↗</a>
+              <button type="button" class="button small" data-modal-close>Close</button>
+            </div>
+          </dialog>
+          <details style="margin-top:.8rem">
+            <summary style="cursor:pointer;font-size:.86rem">Or click through it manually</summary>
+            {# With the account ID saved the links open the user's account directly;
+               without it, Cloudflare's :account placeholder resolves after login
+               (and asks which account, if they have several). #}
+            {% set cf_dash = site.cfAccountId
+              ? 'https://dash.cloudflare.com/' ~ site.cfAccountId
+              : 'https://dash.cloudflare.com/?to=/:account' %}
+            <div style="margin:.6rem 0 .2rem">
+              <form method="post" action="/sites/{{ site.handle }}/settings/action" class="row">
+                <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="tab" value="{{ tab }}">
+                <input type="hidden" name="action" value="cf-account-id">
+                <div>
+                  <label style="margin-top:0">Cloudflare account ID <span class="mut">(makes the links below open your account directly)</span></label>
+                  <input type="text" name="cf_account_id" value="{{ site.cfAccountId }}" placeholder="32-character ID — or paste any dash.cloudflare.com URL" autocomplete="off" spellcheck="false" class="mono">
+                </div>
+                <div class="tight" style="align-self:end"><button class="button" type="submit">Save</button></div>
+              </form>
+              <details style="margin-top:.3rem">
+                <summary class="mut" style="cursor:pointer;font-size:.82rem">Where do I find my account ID?</summary>
+                <ol class="mut" style="font-size:.82rem;margin:.4rem 0 0;padding-left:1.2rem;line-height:1.7">
+                  <li>Log in at <a href="https://dash.cloudflare.com" target="_blank" rel="noopener">dash.cloudflare.com</a>.</li>
+                  <li>Look at the address bar: the URL becomes <span class="mono">dash.cloudflare.com/<strong>&lt;your-account-id&gt;</strong>/…</span> — copy the whole URL and paste it here, the ID is extracted automatically.</li>
+                  <li>Or open any domain's <strong>Overview</strong> page: the right sidebar shows <strong>Account ID</strong> with a copy button.</li>
+                </ol>
+                <p class="mut" style="font-size:.82rem;margin:.4rem 0 0">Running the automatic setup above also stores it for you.</p>
+              </details>
+            </div>
+            <ol class="mut" style="font-size:.86rem;margin:.6rem 0 0;padding-left:1.2rem;line-height:1.7">
+              <li>Set the GitHub repo + branch above, Save, and publish once so the repo has content.</li>
+              <li>Open <a href="{{ cf_dash }}/pages/new/provider/github" target="_blank" rel="noopener">Cloudflare → create a Pages project from GitHub</a>{{ site.cfAccountId ? '' : ' (logs you in and lands on the right screen)' }}.</li>
+              <li>Connect GitHub if asked (one-time), pick the repo.</li>
+              <li>Build settings: Framework preset <strong>None</strong>, build command <strong>empty</strong>, output directory <strong>/</strong> → Save and Deploy.</li>
+              <li>Open <a href="{{ cf_dash }}/pages/view/{{ cf_project }}/domains" target="_blank" rel="noopener">the project's Custom domains screen</a> → <strong>Set up a domain</strong> → add <span class="mono">{{ site.primaryDomain ?: 'example.com' }}</span> — Cloudflare shows the exact CNAME to add. <span class="mut">(Link assumes the project is named <span class="mono">{{ cf_project }}</span> — if you picked another name, use the project list.)</span></li>
+              <li>Optional: a zone <em>Redirect Rule</em> for www → apex.</li>
+            </ol>
+            <p class="mut" style="font-size:.82rem;margin:.6rem 0 0">Netlify works the same way: import the repo, no build step, publish directory <span class="mono">/</span>.</p>
+          </details>
+        </div>
+      </details>
+
+      <details style="margin-top:.8rem" {{ site.serveMode == 'direct' ? 'open' }}>
+        <summary style="font-weight:600;font-size:1.02rem">Direct from this server</summary>
+        <ol class="mut" style="font-size:.86rem;margin:.8rem 0 0;padding-left:1.2rem;line-height:1.7">
+          <li>DNS: add an <strong>A</strong> (and <strong>AAAA</strong> if you have IPv6) record for <span class="mono">{{ site.primaryDomain ?: 'example.com' }}</span> <em>and</em> <span class="mono">www.{{ site.primaryDomain ?: 'example.com' }}</span> pointing at this server's IP (Coolify → your server shows it).</li>
+          <li>In Coolify: open the fastsite app → <strong>Domains</strong> → add <span class="mono">https://{{ site.primaryDomain ?: 'example.com' }}</span>. Traefik then routes the domain here and issues the TLS certificate automatically.</li>
+          <li>Select <strong>Direct from this server</strong> above and Save. Done — every publish is live immediately, no repo needed. Redirects, the 404 page and 404 tracking are all served by the engine; www requests 301 to the apex.</li>
+        </ol>
+      </details>
+
+      <details style="margin-top:.8rem" {{ site.serveMode == 'ftp' ? 'open' }}>
+        <summary style="font-weight:600;font-size:1.02rem">Your own web host (FTP / FTPS / SFTP)</summary>
+        <p class="mut" style="font-size:.86rem;margin:.6rem 0 .8rem;line-height:1.6">
+          Every publish uploads the built site to a directory on hosting you control, so the live site does not depend on this server at all.
+          Only files fastsite itself uploaded are ever removed there — anything else already in that directory is left alone.
+        </p>
+        <form method="post" action="/sites/{{ site.handle }}/settings/action" class="stack">
+          <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="tab" value="{{ tab }}">
+          <div class="row">
+            <div class="tight">
+              <label>Protocol</label>
+              <select name="ftp_protocol">
+                <option value="sftp" {{ site.ftpProtocol == 'sftp' ? 'selected' }}>SFTP (over SSH)</option>
+                <option value="ftps" {{ site.ftpProtocol == 'ftps' ? 'selected' }}>FTPS (FTP + TLS)</option>
+                <option value="ftp" {{ site.ftpProtocol == 'ftp' ? 'selected' }}>FTP (unencrypted)</option>
+              </select>
+            </div>
+            <div>
+              <label>Host</label>
+              <input type="text" name="ftp_host" value="{{ site.ftpHost }}" placeholder="ftp.example.com" autocomplete="off">
+            </div>
+            <div class="tight">
+              <label>Port <span class="mut">(0 = default)</span></label>
+              <input type="number" name="ftp_port" value="{{ site.ftpPort }}" min="0" max="65535" size="5">
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label>Username</label>
+              <input type="text" name="ftp_username" value="{{ site.ftpUsername }}" autocomplete="off">
+            </div>
+            <div>
+              <label>Password</label>
+              <input type="password" name="ftp_password" autocomplete="new-password"
+                     placeholder="{{ site.ftpPasswordEnc ? '••••••••  (saved — leave blank to reuse)' : 'host password' }}">
+            </div>
+          </div>
+          {% if site.ftpProtocol == 'ftp' and site.ftpHost %}
+            <p class="flash err" style="font-size:.85rem;margin:.6rem 0 0">
+              Plain FTP sends the password and every file in <strong>cleartext</strong>. If the host offers FTPS on the same port — most do —
+              switch to it and untick certificate verification below: that keeps the traffic encrypted with the same credentials and the same
+              port, and is strictly better than this. SFTP is better still.
+            </p>
+          {% endif %}
+          <label>Remote directory <span class="mut">(the folder that serves the domain)</span></label>
+          <input type="text" name="ftp_remote_path" value="{{ site.ftpRemotePath }}" placeholder="/public_html" autocomplete="off">
+          <details style="margin-top:.6rem">
+            <summary class="mut" style="font-size:.85rem">SSH key instead of a password (SFTP only)</summary>
+            <textarea name="ftp_key" rows="4" style="margin-top:.5rem;font-family:var(--mono, monospace);font-size:.8rem"
+                      placeholder="{{ site.ftpKeyEnc ? '••••••••  (a key is saved — leave blank to reuse)' : '-----BEGIN OPENSSH PRIVATE KEY-----' }}"></textarea>
+            {% if site.ftpKeyEnc %}<label class="mut" style="font-size:.85rem"><input type="checkbox" name="ftp_key_clear" value="1"> remove the saved key</label>{% endif %}
+          </details>
+          {% if site.ftpPasswordEnc %}<label class="mut" style="font-size:.85rem;margin-top:.4rem"><input type="checkbox" name="ftp_password_clear" value="1"> remove the saved password</label>{% endif %}
+          <label style="font-size:.9rem;margin-top:.6rem"><input type="checkbox" name="ftp_verify_cert" value="1" {{ site.ftpVerifyCert ? 'checked' }}> Verify the host's TLS certificate <span class="mut">(FTPS only)</span></label>
+          <p class="mut" style="font-size:.82rem;margin:.2rem 0 0 1.5rem;line-height:1.55">
+            Leave this on where you can. Untick it only for a host whose certificate is self-signed or issued for its own IP address —
+            the default on most FTP servers, and impossible for anyone to verify. The connection stays encrypted either way; what you
+            give up is proof of <em>who</em> is on the other end, and the account password travels over it.
+            <strong>SFTP avoids the question entirely</strong> — there is no certificate to mismatch.
+          </p>
+          <label style="font-size:.9rem;margin-top:.6rem"><input type="checkbox" name="ftp_activate" value="1" {{ site.serveMode == 'ftp' ? 'checked' }}> Publish this site to this host from now on</label>
+          <div class="row" style="margin-top:.6rem">
+            <button type="submit" name="action" value="ftp-test" class="btn-secondary" data-busy="Connecting…">Save &amp; test connection</button>
+            <button type="submit" name="action" value="ftp-save" data-busy="Connecting…">Save, test &amp; publish</button>
+          </div>
+        </form>
+        <p class="mut" style="font-size:.82rem;margin:.8rem 0 0;line-height:1.6">
+          <strong>If a connection times out, it is almost always a firewall rather than a credential.</strong> Plain FTP and FTPS need
+          <em>two</em> things open outbound from this server: port <span class="mono">21</span> for the control connection <strong>and the
+          host's passive port range</strong> (often <span class="mono">49152-65534</span>) for the transfers themselves. Opening only 21
+          gets you a successful login followed by a stall on the first file. SFTP needs one port, <span class="mono">22</span>, and is the
+          easier thing to get allowed. Use <span class="mono">Save &amp; test connection</span> — it reports which side the block is on.
+        </p>
+        <p class="mut" style="font-size:.82rem;margin:.8rem 0 0;line-height:1.6">
+          The build ships an <span class="mono">.htaccess</span> alongside the pages, which is what gives an uploaded site the same
+          long-cache headers, security headers, canonical-host 301 and redirect rules the CDN path gets. That covers Apache and LiteSpeed
+          (nearly all shared hosting). <strong>nginx ignores <span class="mono">.htaccess</span></strong> — on an nginx host those rules
+          have to go in the server block by hand.
+        </p>
+        {% if site.serveMode == 'ftp' and site.baseUrl %}
+          <p class="mut" style="font-size:.82rem;margin:.5rem 0 0;line-height:1.6">
+            Note that the generated rules redirect everything to <span class="mono">{{ site.canonicalBaseUrl }}</span>, including plain
+            <span class="mono">http://</span> — every canonical tag and sitemap URL in the build already says <span class="mono">https</span>,
+            so the host needs a working certificate.
+          </p>
+        {% endif %}
+      </details>
+    </div>
+    {% endif %}

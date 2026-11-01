@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace Fastsite\Shared\Http;
 
-use Nyholm\Psr7\Response;
+use GuzzleHttp\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
 
 /**
- * Standard response envelope (conzent convention):
+ * Standard response envelope (house convention):
  * success => {success:true, data}, error => {success:false, error:{message}}.
  */
 final class ApiResponse

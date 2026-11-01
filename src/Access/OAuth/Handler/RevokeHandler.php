@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Fastsite\Access\OAuth\Handler;
 
 use Fastsite\Access\OAuth\OAuthService;
-use Nyholm\Psr7\Response;
+use GuzzleHttp\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;

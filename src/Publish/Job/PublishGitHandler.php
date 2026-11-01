@@ -33,17 +33,19 @@ final class PublishGitHandler implements JobHandler
         $site = $this->sites->findByHandle($handle)
             ?? throw new \RuntimeException('Unknown site: ' . $handle);
 
-        // Direct-serve sites with no repo go live at build time — build/ IS
-        // the tree DirectServeGate serves, so there is nothing to push and the
-        // publish step completes as a no-op. A direct site WITH a repo still
-        // pushes: the per-publish git history is kept and the site can flip
-        // back to CDN mode at any time. Every trigger path (API, webhook,
-        // shell edit, scheduler, translate chain) converges here, so this one
-        // check covers them all.
-        if ($site->serveMode === 'direct' && $site->githubRepo === '') {
+        // Sites that don't reach their audience through a git remote and have
+        // no repo configured skip this step entirely: a direct-serve site goes
+        // live at build time (build/ IS the tree DirectServeGate serves) and an
+        // ftp site goes live when PublishFtpHandler uploads it. Either mode
+        // WITH a repo still pushes: the per-publish git history is kept and the
+        // site can flip back to CDN mode at any time. Every trigger path (API,
+        // webhook, shell edit, scheduler, translate chain) converges here, so
+        // this one check covers them all.
+        if (\in_array($site->serveMode, ['direct', 'ftp'], true) && $site->githubRepo === '') {
             return;
         }
 
+        $context->progress('Pushing build to git…');
         $result = $this->lock->withLock($handle, fn (): array => $this->publisher->publish(
             $site,
             (string) ($job->payload['message'] ?? 'publish: full build'),

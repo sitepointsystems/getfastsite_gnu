@@ -1,18 +1,198 @@
 {% extends 'dash-layout.html.twig' %}
 
+{# The per-item actions live in ONE macro so grid and list cannot drift apart:
+   two copies of this markup would mean every future action is added twice and
+   forgotten once. #}
+{% macro acts(m, site, csrf, trash, optimizer_on, link, view) %}
+  {# A grid card is ~200px wide, so three text buttons plus a kebab CANNOT sit
+     on one line — they wrapped, and the "optimized" badge changed how many
+     fit, which is why the row looked different only after optimizing. Making
+     the heights agree was necessary but never sufficient. So the grid keeps
+     ONE primary action and the kebab takes the rest: one line, aligned at any
+     card width. The list view has the room, so it keeps the full labels. #}
+  {% set compact = view == 'grid' %}
+  {# Two zones, and that structure is the fix for both alignment complaints:
+     the actions wrap among THEMSELVES inside .acts-main while the kebab is a
+     separate flex item that always stays on the first line. Previously the
+     kebab used margin-left:auto in a single wrapping row, so as soon as one
+     more item appeared (the "optimized" badge) it was pushed onto a second
+     line. #}
+  <div class="media-acts">
+  <div class="acts-main">
+    {% if trash %}
+      <form method="post" action="/sites/{{ site.handle }}/media/action">
+        <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="restore"><input type="hidden" name="id" value="{{ m.id }}">
+        <button class="button small ghost" type="submit">Restore</button>
+      </form>
+    {% else %}
+      {# The public URL of the shipped file. Media is published
+         REFERENCED-ONLY, so an item nothing embeds is not in dist and that
+         URL 404s — which is exactly the item someone wants a link for. Say
+         so rather than hand over a link that looks fine. #}
+      {% if link %}
+        <button class="button small ghost" type="button" data-copy="{{ link.url }}" data-copy-done="Copied ✓" title="{{ link.url }}">Copy URL</button>
+      {% endif %}
+      {% if not compact %}
+        {# Kept on ONE line: whitespace between the text and the input is a
+           rendered text node inside the label, which shifts the row. #}
+        <label class="button small ghost" title="Upload a new file to replace this one, keeping #{{ m.id }} and every embed that points at it">Replace<input type="file" hidden data-upload-input accept="{{ m.kind == 'video' ? 'video/*' : 'image/*' }}" data-upload-extra='{"action":"replace","id":"{{ m.id }}"}'></label>
+        {% if optimizer_on and m.kind == 'image' and not m.optimizedAt and m.status == 'ready' %}
+          <form method="post" action="/sites/{{ site.handle }}/media/action" data-busy="Optimizing #{{ m.id }} through ShortPixel — this can take up to a minute…">
+            <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="optimize"><input type="hidden" name="id" value="{{ m.id }}">
+            <button class="button small ghost" type="submit" title="Run this image through ShortPixel (once) and regenerate its variants">Optimize</button>
+          </form>
+        {% endif %}
+      {% endif %}
+    {% endif %}
+  </div>
+
+    <div class="kebab">
+      <button type="button" class="kebab-trigger" data-kebab aria-label="More actions for #{{ m.id }}" aria-haspopup="true">⋮</button>
+      <div class="kebab-menu">
+        {% if not trash and m.kind == 'image' and m.status == 'ready' %}
+          <a href="?crop={{ m.id }}&amp;view={{ view }}#reframe">Crop &amp; resize</a>
+        {% endif %}
+        {% if not trash and compact %}
+          {# The grid's overflow actions. Same controls, same payloads — only
+             their location differs, so nothing here is a second implementation. #}
+          <label title="Upload a new file to replace this one, keeping #{{ m.id }} and every embed">Replace file…<input type="file" hidden data-upload-input accept="{{ m.kind == 'video' ? 'video/*' : 'image/*' }}" data-upload-extra='{"action":"replace","id":"{{ m.id }}"}'></label>
+          {% if optimizer_on and m.kind == 'image' and not m.optimizedAt and m.status == 'ready' %}
+            <form method="post" action="/sites/{{ site.handle }}/media/action" data-busy="Optimizing #{{ m.id }} through ShortPixel — this can take up to a minute…">
+              <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="optimize"><input type="hidden" name="id" value="{{ m.id }}">
+              <button type="submit">Optimize with ShortPixel</button>
+            </form>
+          {% endif %}
+        {% endif %}
+        {% if link %}<a href="{{ link.url }}" target="_blank" rel="noopener">Open in new tab</a>{% endif %}
+        <div class="danger-zone">
+          <div class="zone-label">{{ trash ? 'Irreversible' : 'Danger' }}</div>
+          {% if trash %}
+            <form method="post" action="/sites/{{ site.handle }}/media/action"
+                  data-confirm="#{{ m.id }} and its generated files are deleted for good. Any page still embedding it loses the image."
+                  data-confirm-title="Permanently delete #{{ m.id }}?" data-confirm-ok="Delete for good" data-confirm-danger>
+              <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="purge"><input type="hidden" name="id" value="{{ m.id }}">
+              <button type="submit">Delete permanently</button>
+            </form>
+          {% else %}
+            <form method="post" action="/sites/{{ site.handle }}/media/action"
+                  data-confirm="It goes to the trash and can be restored. Pages already embedding it keep rendering it until it is purged."
+                  data-confirm-title="Move #{{ m.id }} to trash?" data-confirm-ok="Move to trash" data-confirm-danger>
+              <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="{{ m.id }}">
+              <button type="submit">Move to trash</button>
+            </form>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+{% endmacro %}
+
 {% block body %}
+{% import _self as ui %}
 <style>
-  .media-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:1rem;margin-top:1rem}
-  .media-tile{border:1px solid var(--line,#1c2b3d);border-radius:12px;overflow:hidden;background:var(--bg-2,#0d1622);display:flex;flex-direction:column}
-  .media-thumb{aspect-ratio:4/3;background:#0a121c center/cover no-repeat;display:flex;align-items:center;justify-content:center;color:#5b6b7e;font-size:2rem}
+  .media-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:1rem;margin-top:1rem}
+  /* NO overflow:hidden on the tile: it clipped the kebab's absolutely
+     positioned menu, so the menu opened INSIDE the card and was invisible.
+     The thumbnail does its own clipping instead, which is all the rounded
+     corners ever needed. */
+  .media-tile{position:relative;border:1px solid var(--line,#1c2b3d);border-radius:12px;background:var(--bg-2,#0d1622);display:flex;flex-direction:column}
+  .media-tile.picked{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+  /* An open menu has to paint over LATER tiles too. Every tile is
+     position:relative with z-index:auto, so paint order follows the DOM and
+     the next tile would cover it. */
+  .media-tile:has(.kebab.open){z-index:40}
+  .media-thumb{aspect-ratio:4/3;background:#0a121c center/cover no-repeat;display:flex;align-items:center;justify-content:center;color:#5b6b7e;font-size:2rem;overflow:hidden;border-radius:11px 11px 0 0}
   .media-thumb img{width:100%;height:100%;object-fit:cover;display:block}
-  .media-meta{padding:.6rem .7rem;font-size:.82rem;display:flex;flex-direction:column;gap:.35rem}
+  .media-meta{padding:.6rem .7rem;font-size:.82rem;display:flex;flex-direction:column;gap:.4rem}
   .media-meta .mono{font-size:.76rem;color:#8aa0b8;word-break:break-all}
-  .media-acts{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.2rem}
-  .linkbtn{background:none;border:0;padding:0;font:inherit;color:var(--accent);cursor:pointer;text-decoration:underline}
-  .linkbtn.danger{color:var(--danger)}
-  .media-editrow{display:flex;gap:.35rem;margin-top:.3rem}
+  /* Every action is now the SAME element type at the same height, which is
+     what actually fixes the alignment: a flex row of a bare <label>, a <span>
+     and several <form><button>s has three different intrinsic heights and
+     baselines, and no amount of nudging makes those agree. */
+  .media-acts{display:flex;gap:.4rem;align-items:center;justify-content:space-between;margin-top:.1rem}
+  .acts-main{display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;min-width:0}
+  .media-acts form{display:contents}
+  /* The row mixes <button> and <label>, and they DO NOT SHARE BOX METRICS.
+     `.button` never sets font-family, so a <button> falls back to the UA's
+     own button font while a <label> inherits the page font — different
+     families, so different glyph sizes, different intrinsic heights and
+     different baselines. That is the staircase: Copy URL (a button) sat
+     high and larger, Replace (a label) sat lower and smaller, the kebab
+     (a button again) higher still. `font:inherit` is what was missing every
+     previous round; matching heights could never fix a font mismatch.
+     UA margin goes too, for the same reason. */
+  .media-acts .button.small,
+  .media-acts .kebab-trigger{
+    display:inline-flex;align-items:center;justify-content:center;
+    height:1.85rem;padding:0 .6rem;margin:0;
+    font:inherit;font-size:.78rem;font-weight:600;line-height:1;
+    box-sizing:border-box;vertical-align:middle;white-space:nowrap;
+  }
+  .media-acts label.button{cursor:pointer}
+  /* .kebab is display:inline-block in the layout, and its trigger is an
+     inline-level box — so the trigger sat on a BASELINE with descender space
+     under it, a few pixels below the buttons beside it, which are flex items
+     with no baseline involvement. Making the wrapper a flex box of a fixed
+     height blockifies the trigger and removes the line box entirely. It was
+     hardest to see in the grid, where the smaller font shrinks the gap.
+     position:relative still stands, so the absolute menu is unaffected. */
+  .media-acts .kebab{flex:0 0 auto;display:flex;align-items:center;height:1.85rem}
+  /* The "optimized" badge is STATUS, not an action, and it was the one child
+     of the row that could never be a button. It lives with the dimensions now,
+     which is both where it belongs and what keeps the row uniform. */
+  .opt-badge{color:var(--ok,#2dd4a7);font-size:.76rem;white-space:nowrap}
+  /* The grid's overflow actions include a file-picker label, which the shared
+     kebab CSS only styles for <a> and <button>. */
+  .kebab-menu label{display:block;width:100%;text-align:left;color:var(--text-2);padding:.45rem .6rem;border-radius:7px;font-size:.85rem;cursor:pointer;margin:0}
+  .kebab-menu label:hover{background:var(--bg-2);color:var(--text)}
+  .media-editrow{display:flex;gap:.35rem}
   .media-editrow input[type=text]{flex:1;min-width:0;font-size:.78rem;padding:.3rem .4rem}
+  .notlive{color:#8aa0b8;font-size:.74rem;cursor:help;border-bottom:1px dotted #445a72}
+  .opt-bar{display:flex;align-items:center;gap:.8rem;flex-wrap:wrap;margin-top:1rem}
+  .opt-bar form{margin:0}
+
+  /* Selection */
+  .pick{position:absolute;top:.5rem;left:.5rem;z-index:2;width:1.15rem;height:1.15rem;cursor:pointer;accent-color:var(--accent)}
+  .bulkbar{display:flex;align-items:center;gap:.7rem;flex-wrap:wrap;margin-top:1rem;padding:.7rem .9rem;border:1px solid var(--border);border-radius:10px;background:var(--bg-2,#0d1622)}
+  .bulkbar .count{font-size:.85rem;color:var(--muted)}
+  .bulkbar[data-has-selection] .count{color:var(--text)}
+  .bulkbar label{display:inline-flex;align-items:center;gap:.4rem;font-size:.85rem;margin:0;cursor:pointer}
+  .viewbar{display:flex;align-items:center;gap:.6rem;margin-top:1rem}
+  .viewtabs{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  /* Specificity deliberately above the layout's `.tabs a`, which set its own
+     padding and colour and used to win on source order alone. */
+  .viewbar .viewtabs a{display:inline-flex;align-items:center;gap:.35rem;height:1.85rem;padding:0 .75rem;font-size:.8rem;color:var(--text-2);text-decoration:none;background:none;border:0;border-radius:0}
+  .viewbar .viewtabs a:hover{color:var(--text);background:var(--bg-2,#0d1622)}
+  .viewbar .viewtabs a.on{background:var(--accent);color:#fff}
+
+  /* List view */
+  .media-list{width:100%;border-collapse:collapse;margin-top:1rem;font-size:.85rem}
+  .media-list th{text-align:left;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);padding:.4rem .5rem;border-bottom:1px solid var(--border)}
+  .media-list td{padding:.5rem;border-bottom:1px solid var(--line,#1c2b3d);vertical-align:middle}
+  .media-list tr.picked{background:rgba(42,134,255,.07)}
+  .media-list .lthumb{width:64px;height:48px;object-fit:cover;border-radius:6px;display:block;background:#0a121c}
+  .media-list .media-acts{margin:0;justify-content:flex-end}
+  .media-list .nowrap{white-space:nowrap;color:#8aa0b8;font-size:.78rem}
+  .media-list tr:has(.kebab.open){position:relative;z-index:40}
+  /* Deliberately NOT overflow-x:auto — that also clips overflow-y, which hid
+     the kebab menu exactly as the tile's overflow:hidden did. The columns drop
+     out below 700px instead, so there is nothing to scroll sideways. */
+  .media-listwrap{overflow:visible}
+  @media (max-width:700px){ .media-list .hide-sm{display:none} }
+
+  /* Reframe panel */
+  .cropwrap{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(240px,1fr);gap:1.2rem;align-items:start}
+  @media (max-width:800px){ .cropwrap{grid-template-columns:1fr} }
+  .cropstage{position:relative;display:inline-block;max-width:100%;line-height:0;background:#0a121c;border-radius:10px;overflow:hidden;cursor:crosshair;user-select:none;touch-action:none}
+  .cropstage img{display:block;max-width:100%;height:auto;-webkit-user-drag:none}
+  .cropbox{position:absolute;border:1px solid #fff;box-shadow:0 0 0 9999px rgba(3,8,15,.62);pointer-events:none}
+  .cropform{display:flex;flex-direction:column;gap:.7rem}
+  .cropform label{display:block;font-size:.78rem;color:var(--muted);margin-bottom:.2rem}
+  .cropform input[type=number]{width:100%;padding:.35rem .5rem;font-size:.85rem}
+  .cropform .row2{display:grid;grid-template-columns:1fr 1fr;gap:.6rem}
+  .ratios{display:flex;gap:.35rem;flex-wrap:wrap}
+  .ratios .button.small{height:1.7rem;display:inline-flex;align-items:center;padding:0 .55rem;font-size:.76rem}
+  .ratios .button.small.on{background:var(--accent);color:#fff;border-color:var(--accent)}
 </style>
 
 <h1>{{ site.name }}</h1>
@@ -25,75 +205,403 @@
 </div>
 
 {% if not trash %}
+{% if not has_origin %}
+  {# Without a base_url there is no origin to build a public URL on, and a
+     relative path in someone's clipboard is useless. Said once here rather
+     than thirty times in the grid. #}
+  <p class="mut" style="margin-top:1rem">Set a <strong>Base URL</strong> in <a href="/sites/{{ site.handle }}/settings">Settings</a> to copy public image URLs.</p>
+{% endif %}
 <div class="card">
   <h2 style="margin-top:0">Add media</h2>
+  {# Picking or dropping starts the upload immediately (progress dialog), so
+     this form's submit button belongs to the URL import — the only thing left
+     that needs one. Alt is not asked for here: it is written automatically on
+     ingest and edited per item below, and a single shared field could never
+     describe a batch anyway. #}
   <form method="post" action="/sites/{{ site.handle }}/media/action" enctype="multipart/form-data">
     <input type="hidden" name="_csrf" value="{{ csrf }}">
-    <div class="row">
-      <div><label>File</label><input type="file" name="file"></div>
-      <div><label>… or import from URL</label><input type="url" name="url" placeholder="https://…"></div>
-    </div>
-    <div class="row">
-      <div><label>Alt text <span class="mut">(required for images)</span></label><input type="text" name="alt"></div>
-      <div class="tight" style="align-self:center">
-        <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer;margin:0">
-          <input type="checkbox" name="decorative" value="1"> decorative (no alt)
-        </label>
-      </div>
-      <div class="tight"><button class="button" type="submit">Upload</button></div>
+    <label class="fs-drop" data-upload-drop>
+      <input type="file" name="files[]" multiple hidden data-upload-input accept="image/*,video/mp4,video/webm">
+      <span class="fs-drop-icon" aria-hidden="true">⬆</span>
+      <span class="fs-drop-main">Drop images here or <u>choose files</u></span>
+      <span class="fs-drop-sub">
+        JPG, PNG, WebP, AVIF, GIF or MP4 · several at once · alt text is written automatically{% if optimizer_on %} and each image is optimized through ShortPixel{% endif %}.
+      </span>
+    </label>
+    {# Without JS the drop zone can't upload anything — hide it and show a
+       plain picker that posts the whole selection in one go (the handler
+       loops it server-side). #}
+    <noscript>
+      <style>[data-upload-drop]{display:none}</style>
+      <div><label>File(s)</label><input type="file" name="files[]" multiple></div>
+    </noscript>
+    <div class="row" style="margin-top:1rem;align-items:end">
+      <div><label>… or import from a URL</label><input type="url" name="url" placeholder="https://…"></div>
+      <div class="tight"><button class="button" type="submit">Import</button></div>
     </div>
   </form>
 </div>
+{% include 'upload-dialog.html.twig' with {
+  upload_endpoint: '/sites/' ~ site.handle ~ '/media/action',
+  upload_hint: optimizer_on
+    ? 'optimizing through ShortPixel + generating variants (large images take longer)…'
+    : 'processing — generating image variants…'
+} %}
+
+{% if optimizer_on %}
+<div class="card opt-bar">
+  <strong>ShortPixel</strong>
+  {% if unoptimized > 0 %}
+    <span class="mut">{{ unoptimized }} image(s) not optimized yet — each is optimized only once.</span>
+    <form method="post" action="/sites/{{ site.handle }}/media/action">
+      <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="optimize-all">
+      <button class="button small" type="submit">Optimize all</button>
+    </form>
+  {% else %}
+    <span class="mut">All images are optimized. New uploads are optimized automatically.</span>
+  {% endif %}
+</div>
+{% endif %}
 {% endif %}
 
+{% if crop_item %}
+{# Reframing is NON-DESTRUCTIVE: the uploaded original is never touched, the
+   rect is stored and re-applied every time variants are built. So a bad drag
+   costs nothing, and "Clear" really does go back to the full picture. The
+   emitted filenames still move (immutable caching), which is also what makes
+   every page embedding this id follow the new framing with nothing to
+   re-embed. #}
+<div class="card" id="reframe" data-crop-panel>
+  <h2 style="margin-top:0">Crop &amp; resize #{{ crop_item.id }}</h2>
+  <p class="mut" style="font-size:.9rem;margin:.2rem 0 1rem">
+    Drag on the image to choose the framing. The original is kept, so you can re-crop or clear this at any time.
+    Every page already embedding this image follows the new framing automatically.
+  </p>
+  <div class="cropwrap">
+    <div class="cropstage" data-crop-stage>
+      <img src="/sites/{{ site.handle }}/media/{{ crop_item.id }}/thumb?original=1&amp;v={{ crop_item.revision }}" alt="{{ crop_item.alt }}" data-crop-image draggable="false">
+      <div class="cropbox" data-crop-box hidden></div>
+    </div>
+    <form method="post" action="/sites/{{ site.handle }}/media/action" class="cropform" data-busy="Reframing #{{ crop_item.id }} and rebuilding its variants…">
+      <input type="hidden" name="_csrf" value="{{ csrf }}">
+      <input type="hidden" name="action" value="crop">
+      <input type="hidden" name="id" value="{{ crop_item.id }}">
+      {# Percentages in the UI, fractions on the wire. A fraction of the
+         ORIGINAL is what gets stored, so the same rect stays valid whatever
+         the source is and nothing outside sharp needs its real geometry. #}
+      <div class="row2">
+        <div><label>Left %</label><input type="number" name="ui_x" min="0" max="100" step="0.1" value="{{ crop_item.cropX is null ? 0 : (crop_item.cropX * 100)|round(1) }}" data-crop-in="x"></div>
+        <div><label>Top %</label><input type="number" name="ui_y" min="0" max="100" step="0.1" value="{{ crop_item.cropY is null ? 0 : (crop_item.cropY * 100)|round(1) }}" data-crop-in="y"></div>
+      </div>
+      <div class="row2">
+        <div><label>Width %</label><input type="number" name="ui_w" min="0.1" max="100" step="0.1" value="{{ crop_item.cropW is null ? 100 : (crop_item.cropW * 100)|round(1) }}" data-crop-in="w"></div>
+        <div><label>Height %</label><input type="number" name="ui_h" min="0.1" max="100" step="0.1" value="{{ crop_item.cropH is null ? 100 : (crop_item.cropH * 100)|round(1) }}" data-crop-in="h"></div>
+      </div>
+      <div>
+        <label>Aspect</label>
+        <div class="ratios">
+          {% for r in [{l:'Free',v:''},{l:'1:1',v:'1'},{l:'16:9',v:'1.7777778'},{l:'4:3',v:'1.3333333'},{l:'3:2',v:'1.5'},{l:'Share card',v:'1.9047619'}] %}
+            <button type="button" class="button small ghost" data-crop-ratio="{{ r.v }}">{{ r.l }}</button>
+          {% endfor %}
+        </div>
+      </div>
+      <div>
+        <label>Max width <span class="mut">(px, optional)</span></label>
+        <input type="number" name="resize_width" min="0" step="1" value="{{ crop_item.resizeWidth ?: '' }}" placeholder="e.g. 1200">
+        <p class="mut" style="font-size:.78rem;margin:.3rem 0 0">Caps the largest file shipped, applied after the crop. Never enlarges. Leave empty for no cap.</p>
+      </div>
+      <p class="mut" style="font-size:.82rem;margin:.2rem 0 0">
+        Now: <strong>{{ crop_item.width }}×{{ crop_item.height }}</strong><span data-crop-preview></span>
+      </p>
+      {# The wire values. Kept in sync by JS; with JS off they are filled from
+         the percentage fields on submit by the same handler, so the numeric
+         path still works. #}
+      <input type="hidden" name="crop_x" value="{{ crop_item.cropX ?? 0 }}" data-crop-out="x">
+      <input type="hidden" name="crop_y" value="{{ crop_item.cropY ?? 0 }}" data-crop-out="y">
+      <input type="hidden" name="crop_w" value="{{ crop_item.cropW ?? 1 }}" data-crop-out="w">
+      <input type="hidden" name="crop_h" value="{{ crop_item.cropH ?? 1 }}" data-crop-out="h">
+      <div class="media-acts" style="margin-top:.6rem">
+        <button class="button" type="submit">Apply</button>
+        <a class="button small ghost" href="?{{ trash ? 'trash=1&amp;' }}view={{ view }}">Cancel</a>
+        <span style="flex:1"></span>
+        {% if crop_item.cropW or crop_item.resizeWidth %}
+          <button class="button small ghost" type="submit" name="clear" value="1"
+                  data-confirm-submit
+                  data-confirm="The stored crop is removed and #{{ crop_item.id }} goes back to the full uploaded image. Nothing is lost either way — the original was never modified."
+                  data-confirm-title="Clear the crop?" data-confirm-ok="Clear it">Clear crop</button>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{# The view switch lives in its own toolbar rather than squeezed into the
+   tabs row between a spacer and a muted count, where it was easy to miss
+   entirely. Real buttons, matching the rest of the screen's language. #}
+<div class="viewbar">
+  <span class="mut" style="font-size:.8rem">View</span>
+  <span class="viewtabs">
+    <a href="?{{ trash ? 'trash=1&amp;' }}view=grid" class="{{ view == 'grid' ? 'on' }}">▦ Grid</a>
+    <a href="?{{ trash ? 'trash=1&amp;' }}view=list" class="{{ view == 'list' ? 'on' }}">☰ List</a>
+  </span>
+</div>
+
+{% if items|length %}
+{# The bulk form is declared OUTSIDE the grid on purpose. Cards contain their
+   own alt-edit form and HTML forbids nesting forms, so the checkboxes join
+   this one through the `form="media-bulk"` attribute instead of being its
+   descendants. Rendered always, so it works with JS off — an empty submit is
+   answered "select at least one item first", not treated as tampering. #}
+<form method="post" action="/sites/{{ site.handle }}/media/action" id="media-bulk" class="bulkbar" data-bulk>
+  <input type="hidden" name="_csrf" value="{{ csrf }}">
+  <label><input type="checkbox" data-pick-all> Select all</label>
+  <span class="count" data-pick-count>None selected</span>
+  <span style="flex:1"></span>
+  {% if trash %}
+    <button class="button small ghost" type="submit" name="action" value="bulk-restore">Restore selected</button>
+    {# Type-to-confirm, because this one is irreversible AND plural. The
+       modal is the gate; the server needs no typed word, since it only ever
+       purges the ids that were actually selected. #}
+    <button class="button small danger" type="submit" name="action" value="bulk-purge"
+            data-confirm-submit
+            data-confirm="The selected items and their generated files are deleted for good. Any page still embedding one loses the image."
+            data-confirm-title="Permanently delete the selected items?"
+            data-confirm-ok="Delete for good" data-confirm-match="delete"
+            data-confirm-match-label="Type &quot;delete&quot; to confirm">Delete permanently</button>
+  {% else %}
+    {% if optimizer_on %}<button class="button small ghost" type="submit" name="action" value="bulk-optimize">Optimize selected</button>{% endif %}
+    <button class="button small danger" type="submit" name="action" value="bulk-delete"
+            data-confirm-submit
+            data-confirm="They go to the trash and can be restored. Pages already embedding them keep rendering them until they are purged."
+            data-confirm-title="Move the selected items to trash?" data-confirm-ok="Move to trash">Move selected to trash</button>
+  {% endif %}
+</form>
+{% endif %}
+
+{% if view == 'list' %}
+<div class="media-listwrap">
+<table class="media-list">
+  <thead>
+    <tr>
+      <th style="width:1.5rem"></th>
+      <th style="width:70px"></th>
+      <th>Name</th>
+      <th class="hide-sm">Alt</th>
+      <th class="hide-sm">Size</th>
+      <th>{{ trash ? 'Deleted' : 'Actions' }}</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for m in items %}
+    {% set link = links[m.id] ?? null %}
+    <tr data-row>
+      <td><input class="pick" type="checkbox" name="ids[]" value="{{ m.id }}" form="media-bulk" data-pick aria-label="Select #{{ m.id }}"></td>
+      <td>
+        {% if m.kind == 'image' %}
+          <img class="lthumb" src="/sites/{{ site.handle }}/media/{{ m.id }}/thumb?v={{ m.revision }}" alt="{{ m.alt }}" loading="lazy" onerror="this.style.display='none'">
+        {% else %}<span class="lthumb" style="display:flex;align-items:center;justify-content:center">🎞</span>{% endif %}
+      </td>
+      <td>
+        <div>{{ m.originalName }}</div>
+        <div class="nowrap">#{{ m.id }} · {{ m.kind }}{% if m.width %} · {{ m.width }}×{{ m.height }}{% endif %}{% if m.optimizedAt %} · <span class="opt-badge" title="Optimized {{ m.optimizedAt }}">✓ optimized</span>{% endif %}
+          {% if link and not link.live %} · <span class="notlive" title="This file is not on the live site yet. Media ships referenced-only — embed it on a page and publish, or turn on “Publish the whole library” in Settings.">not live yet</span>{% endif %}
+        </div>
+      </td>
+      <td class="hide-sm">
+        {% if trash %}<span class="mut">{{ m.alt }}</span>{% else %}
+        <form method="post" action="/sites/{{ site.handle }}/media/action" class="media-editrow">
+          <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="edit"><input type="hidden" name="id" value="{{ m.id }}">
+          <input type="text" name="alt" value="{{ m.alt }}" placeholder="alt text">
+          <button class="button small" type="submit">Save</button>
+        </form>
+        {% endif %}
+      </td>
+      <td class="hide-sm nowrap">{{ (m.bytes / 1024)|number_format(0) }} KB</td>
+      <td>
+        {% if trash %}<span class="nowrap">{{ m.deletedAt }}</span>{% endif %}
+        {{ ui.acts(m, site, csrf, trash, optimizer_on, link, view) }}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
 <div class="media-grid">
   {% for m in items %}
-  <div class="media-tile">
+  {% set link = links[m.id] ?? null %}
+  <div class="media-tile" data-row>
+    <input class="pick" type="checkbox" name="ids[]" value="{{ m.id }}" form="media-bulk" data-pick aria-label="Select #{{ m.id }}">
     <div class="media-thumb"{% if m.kind == 'video' %} title="video"{% endif %}>
       {% if m.kind == 'image' %}
-        <img src="/sites/{{ site.handle }}/media/{{ m.id }}/thumb" alt="{{ m.alt }}" loading="lazy"
+        <img src="/sites/{{ site.handle }}/media/{{ m.id }}/thumb?v={{ m.revision }}" alt="{{ m.alt }}" loading="lazy"
              onerror="this.style.display='none';this.parentNode.textContent='🖼'">
       {% else %}🎞{% endif %}
     </div>
     <div class="media-meta">
-      <div><span class="mono">#{{ m.id }}</span> · {{ m.kind }}{% if m.width %} · {{ m.width }}×{{ m.height }}{% endif %} · {{ (m.bytes / 1024)|number_format(0) }} KB</div>
+      <div><span class="mono">#{{ m.id }}</span> · {{ m.kind }}{% if m.width %} · {{ m.width }}×{{ m.height }}{% endif %} · {{ (m.bytes / 1024)|number_format(0) }} KB{% if m.optimizedAt %} · <span class="opt-badge" title="Optimized {{ m.optimizedAt }}">✓ optimized</span>{% endif %}</div>
       <div class="mono" style="user-select:all">&lt;img data-media-id="{{ m.id }}" alt="{{ m.alt }}"&gt;</div>
+      {% if link and not link.live %}
+        <div><span class="notlive" title="This file is not on the live site yet. Media ships referenced-only — embed it on a page and publish, or turn on “Publish the whole library” in Settings.">not live yet</span></div>
+      {% endif %}
       {% if trash %}
-        <div class="media-acts">
-          <form method="post" action="/sites/{{ site.handle }}/media/action" class="inline">
-            <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="restore"><input type="hidden" name="id" value="{{ m.id }}">
-            <button class="linkbtn" type="submit">restore</button>
-          </form>
-          <form method="post" action="/sites/{{ site.handle }}/media/action" class="inline" onsubmit="return confirm('Permanently delete #{{ m.id }} and its files? This cannot be undone.')">
-            <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="purge"><input type="hidden" name="id" value="{{ m.id }}">
-            <button class="linkbtn danger" type="submit">purge</button>
-          </form>
-        </div>
+        <div class="mut" style="font-size:.76rem">Deleted {{ m.deletedAt }}</div>
       {% else %}
         <form method="post" action="/sites/{{ site.handle }}/media/action" class="media-editrow">
           <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="edit"><input type="hidden" name="id" value="{{ m.id }}">
           <input type="text" name="alt" value="{{ m.alt }}" placeholder="alt text">
           <button class="button small" type="submit">Save</button>
         </form>
-        <div class="media-acts">
-          <form method="post" action="/sites/{{ site.handle }}/media/action" class="inline" onsubmit="return confirm('Move #{{ m.id }} to trash?')">
-            <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="{{ m.id }}">
-            <button class="linkbtn danger" type="submit">delete</button>
-          </form>
-        </div>
       {% endif %}
+      {{ ui.acts(m, site, csrf, trash, optimizer_on, link, view) }}
     </div>
   </div>
-  {% else %}
-  <p class="mut">{{ trash ? 'Trash is empty.' : 'No media yet.' }}</p>
   {% endfor %}
 </div>
+{% endif %}
+
+{% if items|length == 0 %}
+  <p class="mut">{{ trash ? 'Trash is empty.' : 'No media yet.' }}</p>
+{% endif %}
 
 {% if pages > 1 %}
 <p style="margin-top:1rem">
   {% for p in 1..pages %}
-    {% if p == page %}<strong>{{ p }}</strong>{% else %}<a href="?{{ trash ? 'trash=1&amp;' }}page={{ p }}">{{ p }}</a>{% endif %}
+    {% if p == page %}<strong>{{ p }}</strong>{% else %}<a href="?{{ trash ? 'trash=1&amp;' }}view={{ view }}&amp;page={{ p }}">{{ p }}</a>{% endif %}
   {% endfor %}
 </p>
+{% endif %}
+
+{% if crop_item %}
+<script>
+(function(){
+  var panel = document.querySelector('[data-crop-panel]');
+  if (!panel) return;
+  var stage = panel.querySelector('[data-crop-stage]');
+  var img = panel.querySelector('[data-crop-image]');
+  var box = panel.querySelector('[data-crop-box]');
+  var form = panel.querySelector('form');
+  var preview = panel.querySelector('[data-crop-preview]');
+  var ins = {}, outs = {};
+  panel.querySelectorAll('[data-crop-in]').forEach(function(el){ ins[el.getAttribute('data-crop-in')] = el; });
+  panel.querySelectorAll('[data-crop-out]').forEach(function(el){ outs[el.getAttribute('data-crop-out')] = el; });
+
+  // The rect lives here as fractions 0..1 — the same units that get stored,
+  // so nothing has to convert between pixel spaces at submit time.
+  var rect = {
+    x: parseFloat(outs.x.value) || 0,
+    y: parseFloat(outs.y.value) || 0,
+    w: parseFloat(outs.w.value) || 1,
+    h: parseFloat(outs.h.value) || 1
+  };
+  var ratio = 0; // 0 = free
+
+  function clamp(v){ return Math.max(0, Math.min(1, v)); }
+
+  function draw(){
+    rect.x = clamp(rect.x); rect.y = clamp(rect.y);
+    rect.w = Math.max(0.01, Math.min(rect.w, 1 - rect.x));
+    rect.h = Math.max(0.01, Math.min(rect.h, 1 - rect.y));
+
+    box.hidden = false;
+    box.style.left = (rect.x * 100) + '%';
+    box.style.top = (rect.y * 100) + '%';
+    box.style.width = (rect.w * 100) + '%';
+    box.style.height = (rect.h * 100) + '%';
+
+    ['x','y','w','h'].forEach(function(k){
+      outs[k].value = rect[k].toFixed(6);
+      if (ins[k] && document.activeElement !== ins[k]) ins[k].value = (rect[k] * 100).toFixed(1);
+    });
+
+    // Honest about which dimensions this will actually produce: the stored
+    // width/height come from the source, and the crop is a fraction of it.
+    if (preview){
+      var ow = img.naturalWidth || 0, oh = img.naturalHeight || 0;
+      if (!ow || !oh){ preview.textContent = ''; return; }
+      var sw = Math.round(ow * rect.w);
+      var sh = Math.round(oh * rect.h);
+      var cap = parseInt(form.querySelector('[name=resize_width]').value, 10);
+      if (cap > 0 && cap < sw){ sh = Math.round(sh * (cap / sw)); sw = cap; }
+      preview.textContent = ' → about ' + sw + '×' + sh;
+    }
+  }
+
+  // Dragging: pointer events cover mouse, pen and touch in one path.
+  var dragging = false, startX = 0, startY = 0;
+  function pos(e){
+    var r = stage.getBoundingClientRect();
+    return { x: clamp((e.clientX - r.left) / r.width), y: clamp((e.clientY - r.top) / r.height) };
+  }
+  stage.addEventListener('pointerdown', function(e){
+    if (e.button !== undefined && e.button !== 0) return;
+    dragging = true;
+    stage.setPointerCapture(e.pointerId);
+    var p = pos(e); startX = p.x; startY = p.y;
+    e.preventDefault();
+  });
+  stage.addEventListener('pointermove', function(e){
+    if (!dragging) return;
+    var p = pos(e);
+    var w = Math.abs(p.x - startX), h = Math.abs(p.y - startY);
+    if (ratio > 0){
+      // Keep the requested aspect in the IMAGE's pixel space, not the
+      // element's: the stage is displayed at some arbitrary size, so a
+      // fraction-space square is only square on a square image.
+      var natural = (img.naturalWidth || 1) / (img.naturalHeight || 1);
+      h = (w * natural) / ratio;
+      if (startY + h > 1 || startX + w > 1){
+        h = Math.min(h, 1 - Math.min(startY, p.y));
+        w = (h * ratio) / natural;
+      }
+    }
+    rect.x = Math.min(startX, ratio > 0 ? startX : p.x);
+    rect.y = Math.min(startY, ratio > 0 ? startY : p.y);
+    rect.w = w; rect.h = h;
+    draw();
+  });
+  stage.addEventListener('pointerup', function(){ dragging = false; });
+  stage.addEventListener('pointercancel', function(){ dragging = false; });
+
+  // Typed percentages are equally authoritative — that is the no-JS path's
+  // shape, kept working here so both agree.
+  Object.keys(ins).forEach(function(k){
+    ins[k].addEventListener('input', function(){
+      var v = parseFloat(ins[k].value);
+      if (!isFinite(v)) return;
+      rect[k] = v / 100;
+      draw();
+    });
+  });
+  var cap = form.querySelector('[name=resize_width]');
+  if (cap) cap.addEventListener('input', draw);
+
+  panel.querySelectorAll('[data-crop-ratio]').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      panel.querySelectorAll('[data-crop-ratio]').forEach(function(b){ b.classList.remove('on'); });
+      btn.classList.add('on');
+      ratio = parseFloat(btn.getAttribute('data-crop-ratio')) || 0;
+      if (ratio > 0){
+        var natural = (img.naturalWidth || 1) / (img.naturalHeight || 1);
+        rect.h = (rect.w * natural) / ratio;
+        draw();
+      }
+    });
+  });
+
+  // With JS off the hidden fraction fields keep their server-rendered values
+  // and the percentage boxes are what the person edits, so convert on submit
+  // as well — belt and braces for the case where an input event never fired.
+  form.addEventListener('submit', function(){
+    ['x','y','w','h'].forEach(function(k){
+      var v = parseFloat(ins[k].value);
+      if (isFinite(v)) outs[k].value = clamp(v / 100).toFixed(6);
+    });
+  });
+
+  draw();
+})();
+</script>
 {% endif %}
 {% endblock %}

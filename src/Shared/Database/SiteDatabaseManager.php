@@ -93,6 +93,18 @@ final class SiteDatabaseManager
         $db->executeStatement('PRAGMA wal_checkpoint(TRUNCATE)');
     }
 
+    /** Whether this process already holds a connection to that site. */
+    public function isSiteOpen(string $handle): bool
+    {
+        return isset($this->sites[$handle]);
+    }
+
+    /** Whether this process already holds the engine connection. */
+    public function isEngineOpen(): bool
+    {
+        return $this->engine !== null;
+    }
+
     /**
      * Closes one site's connection (if open). Restore swaps the site.db file
      * on disk, which needs the handle released first — on Windows an open
@@ -107,6 +119,27 @@ final class SiteDatabaseManager
     }
 
     /**
+     * Drops every cached SITE connection, keeping the engine one. Called
+     * after every job and every scheduler tick, because the cache is
+     * otherwise held for the life of the process while a `restore_site`
+     * replaces the FILE behind it: the swap renames site.db aside and a
+     * snapshot in, and on Linux a handle that was already open keeps
+     * serving the DISPLACED inode — reads AND writes, with no error and no
+     * lock contention, since SQLite's locks live on the file and the two
+     * processes now hold different files. Only the process that ran the
+     * restore calls closeSite(), so every other worker kept building from
+     * the pre-restore rows. Reopening costs an open(2) plus four pragmas,
+     * which php-fpm already pays on every request.
+     */
+    public function closeSites(): void
+    {
+        foreach ($this->sites as $connection) {
+            $connection->close();
+        }
+        $this->sites = [];
+    }
+
+    /**
      * Closes every open connection. Needed before deleting site data and on
      * worker shutdown; on Windows an open handle blocks file deletion.
      */
@@ -114,10 +147,7 @@ final class SiteDatabaseManager
     {
         $this->engine?->close();
         $this->engine = null;
-        foreach ($this->sites as $connection) {
-            $connection->close();
-        }
-        $this->sites = [];
+        $this->closeSites();
     }
 
     public static function assertHandle(string $handle): void

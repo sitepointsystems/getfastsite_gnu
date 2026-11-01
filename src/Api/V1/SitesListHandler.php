@@ -34,6 +34,8 @@ final class SitesListHandler implements RequestHandlerInterface
                 'primary_locale' => $site->primaryLocale,
                 'locales' => $site->locales,
                 'status' => $site->status,
+                'development' => $site->development,
+                'workspace_id' => $site->workspaceId,
             ];
         }
 

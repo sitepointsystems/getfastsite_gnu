@@ -39,14 +39,15 @@ final class RestoreSiteHandler implements JobHandler
         $this->lock->withLock($handle, function () use ($site, $job, $context): void {
             $context->heartbeat();
             if (($job->payload['media'] ?? false) === true || isset($job->payload['media_key'])) {
+                $context->progress('Restoring media…');
                 $this->backups->restoreSiteMedia($site, isset($job->payload['media_key']) ? (string) $job->payload['media_key'] : null);
-                $context->heartbeat();
             }
             if (($job->payload['shell'] ?? false) === true || isset($job->payload['shell_key'])) {
+                $context->progress('Restoring shell…');
                 $this->backups->restoreSiteShell($site, isset($job->payload['shell_key']) ? (string) $job->payload['shell_key'] : null);
-                $context->heartbeat();
             }
             // DB restore enqueues its own rebuild+publish chain.
+            $context->progress('Restoring database…');
             $this->backups->restoreSiteDb($site, isset($job->payload['db_key']) ? (string) $job->payload['db_key'] : null);
         });
     }

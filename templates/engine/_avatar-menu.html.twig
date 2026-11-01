@@ -1,0 +1,20 @@
+{# The account avatar dropdown — rendered in the sidebar top row AND in the
+   mobile topbar (dash-layout includes it twice). Circle = profile image
+   (configured on /account) or the user's initial; menu = identity header
+   with the same image + Account + Sign out. #}
+<details class="ss-dd av-dd">
+  <summary aria-label="Your account">
+    <span class="savatar av-circle">{{ (user.name|default(user.email))|first|upper }}{% if avatar_url %}<img src="{{ avatar_url }}" alt="" onerror="this.remove()">{% endif %}</span>
+  </summary>
+  <div class="ss-panel av-panel">
+    <div class="av-who">
+      <span class="savatar av-circle">{{ (user.name|default(user.email))|first|upper }}{% if avatar_url %}<img src="{{ avatar_url }}" alt="" onerror="this.remove()">{% endif %}</span>
+      <div style="min-width:0">{{ user.name|default(user.email) }}<br><span class="mut">{{ user.email }}</span></div>
+    </div>
+    <a class="ss-opt" href="/account">Account</a>
+    <form method="post" action="/logout">
+      <input type="hidden" name="_csrf" value="{{ csrf }}">
+      <button type="submit" class="ss-opt">Sign out</button>
+    </form>
+  </div>
+</details>

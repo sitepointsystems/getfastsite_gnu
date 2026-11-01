@@ -41,6 +41,36 @@ final class DbalTranslationRepository implements TranslationRepository
         return $out;
     }
 
+    public function usableSlugsByLocale(string $site, string $locale): array
+    {
+        $rows = $this->databases->site($site)->fetchAllAssociative(
+            "SELECT content_id, slug FROM content_translations WHERE locale = ? AND status IN ('translated', 'manual')",
+            [$locale],
+        );
+
+        $out = [];
+        foreach ($rows as $row) {
+            $out[(int) $row['content_id']] = (string) $row['slug'];
+        }
+
+        return $out;
+    }
+
+    public function allByLocale(string $site, string $locale): array
+    {
+        $rows = $this->databases->site($site)->fetchAllAssociative(
+            'SELECT * FROM content_translations WHERE locale = ?',
+            [$locale],
+        );
+
+        $out = [];
+        foreach ($rows as $row) {
+            $out[(int) $row['content_id']] = ContentTranslation::fromRow($row);
+        }
+
+        return $out;
+    }
+
     public function upsert(string $site, int $contentId, string $locale, array $fields): void
     {
         $db = $this->databases->site($site);

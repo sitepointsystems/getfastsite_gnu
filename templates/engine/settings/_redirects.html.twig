@@ -1,0 +1,160 @@
+    <div class="card">
+      <details>
+        <summary style="font-weight:600;font-size:1.05rem">Redirects <span class="mut" style="font-weight:400">({{ redirects|length }})</span></summary>
+
+      {# The host rule is a site setting, not a table row: _redirects matches
+         paths only, so www↔apex can never be one of the rules below. #}
+      <h3 style="margin:1rem 0 .3rem;font-size:.95rem">www ↔ non-www</h3>
+      <p class="mut" style="font-size:.85rem;margin:0 0 .6rem">Pick the one host the site answers on. Every canonical, OG and sitemap URL uses it, and the other form 301s to it.</p>
+      <form method="post" action="/sites/{{ site.handle }}/settings/action" class="row">
+        <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="tab" value="{{ tab }}">
+        <input type="hidden" name="action" value="canonical-host">
+        <div>
+          <select name="canonical_host">
+            <option value="apex" {{ site.canonicalHost == 'apex' ? 'selected' }}>Non-www — {{ site.primaryDomain ?: 'example.com' }} (recommended); www 301s here</option>
+            <option value="www" {{ site.canonicalHost == 'www' ? 'selected' }}>www — www.{{ site.primaryDomain ?: 'example.com' }}; the bare domain 301s here</option>
+          </select>
+        </div>
+        <div class="tight" style="align-self:end"><button class="button" type="submit">Save host rule</button></div>
+      </form>
+      {% if site.serveMode == 'direct' %}
+      <p class="mut" style="font-size:.82rem;margin:.5rem 0 0">This engine serves the site, so it performs the 301 itself — nothing else to configure.</p>
+      {% else %}
+      <p class="mut" style="font-size:.82rem;margin:.5rem 0 0">This site publishes to a CDN, and <span class="mono">_redirects</span> matches paths only — never hosts. Add the 301 as a Cloudflare <em>zone</em> Redirect Rule: when <span class="mono">hostname eq "{{ site.canonicalHost == 'www' ? site.primaryDomain ?: 'example.com' : 'www.' ~ (site.primaryDomain ?: 'example.com') }}"</span> → dynamic redirect to <span class="mono">concat("https://{{ site.canonicalHost == 'www' ? 'www.' ~ (site.primaryDomain ?: 'example.com') : site.primaryDomain ?: 'example.com' }}", http.request.uri.path)</span>, status 301, preserve query string. The canonical tag above already points at the right host either way.</p>
+      {% endif %}
+
+      <h3 style="margin:1.6rem 0 .3rem;font-size:.95rem">Path rules</h3>
+      <p class="mut" style="font-size:.85rem;margin:0 0 .6rem">3xx rules emitted to <span class="mono">_redirects</span>. A rule that shadows a live page is skipped automatically. <strong>410 (Gone)</strong> needs no target — it tells search engines the URL is permanently removed{% if site.serveMode != 'direct' %}, and is served for real only in <em>Direct from this server</em> mode; on a CDN the path falls through to your 404 page{% endif %}.</p>
+      <form method="post" action="/sites/{{ site.handle }}/settings/action" class="row" data-redirect-form>
+        <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="tab" value="{{ tab }}">
+        <input type="hidden" name="action" value="redirect-save">
+        <div><label>From <span class="mut">(/old-path)</span></label><input type="text" name="from_path" placeholder="/old" required></div>
+        <div><label>To</label><input type="text" name="to_path" placeholder="/new" data-redirect-to></div>
+        <div class="tight"><label>Status</label>
+          <select name="status" data-redirect-status>
+            <option value="301">301 moved</option>
+            <option value="302">302 temporary</option>
+            <option value="308">308 permanent</option>
+            <option value="410">410 gone</option>
+          </select>
+        </div>
+        <div class="tight" style="align-self:end"><button class="button" type="submit">Add</button></div>
+      </form>
+      <table style="margin-top:1rem">
+        <tr><th>From</th><th>To</th><th>Status</th><th></th></tr>
+        {% for r in redirects %}
+        <tr>
+          <td class="mono">{{ r.from_path }}</td>
+          <td class="mono">{{ r.to_path ?: '—' }}</td>
+          <td class="mut">{{ r.status == 410 ? '410 gone' : r.status }}</td>
+          <td>
+            <form method="post" action="/sites/{{ site.handle }}/settings/action" class="inline">
+              <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="tab" value="{{ tab }}"><input type="hidden" name="action" value="redirect-delete"><input type="hidden" name="id" value="{{ r.id }}">
+              <button class="button small ghost" type="submit">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="mut">No redirects.</td></tr>
+        {% endfor %}
+      </table>
+      <script>
+      // 410 has no target: blank and disable the To field so the form can't
+      // suggest one. (The service drops it either way.)
+      (function(){
+        var form = document.querySelector('[data-redirect-form]');
+        if (!form) return;
+        var to = form.querySelector('[data-redirect-to]'), status = form.querySelector('[data-redirect-status]');
+        function sync(){
+          var gone = status.value === '410';
+          to.disabled = gone;
+          to.required = !gone;
+          if (gone) { to.value = ''; }
+          to.placeholder = gone ? 'not used for 410' : '/new';
+        }
+        status.addEventListener('change', sync);
+        sync();
+      })();
+      </script>
+      </details>
+    </div>
+
+    {# Shown when there is anything to show OR a filter is active, so filtering
+       down to nothing says so instead of making the whole card vanish. #}
+    {% if missing or missing_q %}
+    <div class="card">
+      <details{% if missing_q %} open{% endif %}>
+        <summary style="font-weight:600;font-size:1.05rem">Suggested redirects <span class="mut" style="font-weight:400">(from captured 404s — showing {{ missing|length }} of {{ missing_total }}{{ missing_q ? ' matching' : '' }})</span></summary>
+
+      {# Filter and sort ride in the URL like ?tab= does: a filtered view
+         survives a reload, a bookmark and the redirect back from a bulk
+         action. The FILTER is what makes a directory tractable — sorting alone
+         groups /media/ together but still leaves every box to tick by hand. #}
+      <form method="get" action="/sites/{{ site.handle }}/settings" class="row" style="margin-top:.8rem;gap:.4rem">
+        <input type="hidden" name="tab" value="redirects">
+        <div><label>Filter by path</label><input type="search" name="q" value="{{ missing_q }}" placeholder="/media/"></div>
+        <div class="tight"><label>Sort</label>
+          <select name="sort">
+            <option value="hits" {{ missing_sort == 'hits' ? 'selected' }}>Most hits</option>
+            <option value="path" {{ missing_sort == 'path' ? 'selected' }}>Path A→Z</option>
+            <option value="recent" {{ missing_sort == 'recent' ? 'selected' }}>Most recent</option>
+          </select>
+        </div>
+        <div class="tight" style="align-self:end"><button class="button small" type="submit">Filter</button></div>
+        {% if missing_q %}<div class="tight" style="align-self:end"><a class="button small ghost" href="/sites/{{ site.handle }}/settings?tab=redirects{{ missing_sort != 'hits' ? '&sort=' ~ missing_sort : '' }}">Clear filter</a></div>{% endif %}
+      </form>
+
+      {% if missing %}
+      {# The bulk bar is the layout's shared [data-bulk] mechanism: the
+         checkboxes live in the table and join THIS form through the `form`
+         attribute, because each row already contains its own form and HTML
+         forbids nesting them. #}
+      <form method="post" action="/sites/{{ site.handle }}/settings/action" id="missing-bulk" class="bulkbar" style="margin-top:.8rem" data-bulk>
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="tab" value="{{ tab }}">
+        <input type="hidden" name="q" value="{{ missing_q }}">
+        <input type="hidden" name="sort" value="{{ missing_sort }}">
+        <label><input type="checkbox" data-pick-all> Select all shown</label>
+        <span class="count" data-pick-count>None selected</span>
+        <span style="flex:1"></span>
+        <button class="button small ghost" type="submit" name="action" value="missing-clear-bulk">Dismiss selected</button>
+        {# Confirmed, because unlike Dismiss this writes a rule per path and
+           republishes the site. #}
+        <button class="button small danger" type="submit" name="action" value="missing-gone-bulk"
+                data-confirm-submit
+                data-confirm="Each selected path gets a 410 Gone rule, telling search engines it is permanently removed. The site rebuilds and publishes. You can delete the rules afterwards from Path rules above."
+                data-confirm-title="Mark the selected paths 410 Gone?" data-confirm-ok="Mark 410 Gone">Mark 410 Gone</button>
+      </form>
+
+      <table style="margin-top:.8rem">
+        <tr><th style="width:1%"></th><th>Missing path</th><th>Hits</th><th>Send to</th><th></th></tr>
+        {% for m in missing %}
+        <tr data-row>
+          <td><input class="pick" type="checkbox" name="ids[]" value="{{ m.id }}" form="missing-bulk" data-pick aria-label="Select {{ m.path }}"></td>
+          <td class="mono">{{ m.path }}</td>
+          <td class="mut">{{ m.hits }}</td>
+          <td colspan="2">
+            <form method="post" action="/sites/{{ site.handle }}/settings/action" class="row" style="gap:.4rem">
+              <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="tab" value="{{ tab }}"><input type="hidden" name="action" value="missing-resolve"><input type="hidden" name="id" value="{{ m.id }}">
+              <div><input type="text" name="to_path" placeholder="/new-home"></div>
+              <div class="tight"><button class="button small" type="submit">Create 301</button></div>
+              {# No replacement page? Say so properly: 410 deindexes faster
+                 than letting the URL keep 404ing. #}
+              <div class="tight"><button class="button small ghost" type="submit" name="status" value="410" title="This URL is permanently removed and has no replacement">Mark 410 gone</button></div>
+              <div class="tight">
+                <button class="button small ghost" type="submit" formaction="/sites/{{ site.handle }}/settings/action" name="action" value="missing-clear">Dismiss</button>
+              </div>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% if missing_total > missing|length %}
+      <p class="mut" style="font-size:.82rem;margin:.6rem 0 0">{{ missing_total - missing|length }} more match and are not shown. "Select all shown" covers this page only — narrow the filter to reach the rest.</p>
+      {% endif %}
+      {% else %}
+      <p class="mut" style="margin-top:.8rem">No captured 404s match <span class="mono">{{ missing_q }}</span>.</p>
+      {% endif %}
+      </details>
+    </div>
+    {% endif %}

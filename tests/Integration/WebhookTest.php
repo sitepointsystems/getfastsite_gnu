@@ -48,7 +48,7 @@ final class WebhookTest extends TestCase
         $this->webhooks = new WebhookService($this->databases, new TokenCipher('test-secret'), $clock);
 
         $this->contentRepo = new DbalContentRepository($this->databases, $clock);
-        $content = new ContentService($this->contentRepo, new ContentSanitizer(), $clock);
+        $content = new ContentService($this->contentRepo, new ContentSanitizer(), $clock, new \Fastsite\Media\Repository\DbalMediaRepository($this->databases, $clock));
         $mediaRepo = new DbalMediaRepository($this->databases, $clock);
         $media = new MediaService($mediaRepo, $this->databases, new SafeUrlFetcher(), new NullLogger(), new \Fastsite\Media\NullImageOptimizer(new NullLogger()), $appRoot);
         $this->mapper = new AutoSeoMapper($content, $this->contentRepo, $media, new NullLogger());
@@ -145,6 +145,86 @@ final class WebhookTest extends TestCase
     {
         $this->expectException(\InvalidArgumentException::class);
         $this->mapper->process($this->site, ['title' => 'no id'], static function (): void {});
+    }
+
+    public function testRealAutoSeoPayloadShapeIsNormalized(): void
+    {
+        // The field names the actual AutoSEO service sends (content_html,
+        // metaDescription, heroImageUrl, publishedAt with milliseconds).
+        $payload = [
+            'event' => 'article.published',
+            'id' => 4711,
+            'title' => 'Native shape',
+            'slug' => 'native-shape',
+            'content_html' => '<p>Native body.</p>',
+            'metaDescription' => 'A native meta description.',
+            'heroImageUrl' => 'https://cdn.unreachable.invalid/hero.jpg',
+            'heroImageAlt' => 'Hero alt',
+            'languageCode' => 'en',
+            'status' => 'published',
+            'publishedAt' => '2026-08-10T12:34:56.000Z',
+        ];
+
+        $result = $this->mapper->process($this->site, $payload, static function (): void {});
+        self::assertStringContainsString('created', $result);
+
+        $post = $this->contentRepo->findBySource('whtest', 'autoseo', '4711');
+        self::assertNotNull($post);
+        self::assertStringContainsString('Native body', $post->bodyHtml);
+        self::assertSame('A native meta description.', $post->excerpt);
+        self::assertSame('A native meta description.', $post->seoDescription);
+        // Milliseconds stripped into the strict ISO shape the engine requires.
+        self::assertSame('2026-08-10T12:34:56Z', $post->publishedAt);
+    }
+
+    public function testTestEventIsSkippedNotPublished(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->mapper->process($this->site, ['event' => 'test'], static function (): void {});
+    }
+
+    public function testNonPrimaryLanguageDeliveryIsSkipped(): void
+    {
+        // The engine generates translations itself — a da/de/… delivery for
+        // an en-primary site must be skipped, never published as a post.
+        $this->expectException(\InvalidArgumentException::class);
+        $this->mapper->process($this->site, [
+            'id' => 4712,
+            'title' => 'Dansk artikel',
+            'content_html' => '<p>Dansk.</p>',
+            'languageCode' => 'da',
+        ], static function (): void {});
+    }
+
+    public function testSetSecretReplacesAndRoundTrips(): void
+    {
+        $created = $this->webhooks->createIntegration('autoseo-x', 'whtest', 'autoseo');
+        $this->webhooks->setSecret($created['id'], 'whtest', 'aseo_wh_EXAMPLE00000000');
+
+        $found = $this->webhooks->findBySlug('autoseo-x');
+        self::assertNotNull($found);
+        self::assertSame('aseo_wh_EXAMPLE00000000', $found['secret']);
+    }
+
+    public function testSetSecretRejectsShortValuesAndWrongSite(): void
+    {
+        $created = $this->webhooks->createIntegration('autoseo-x', 'whtest', 'autoseo');
+
+        try {
+            $this->webhooks->setSecret($created['id'], 'whtest', 'short');
+            self::fail('short secret accepted');
+        } catch (\InvalidArgumentException) {
+        }
+
+        try {
+            $this->webhooks->setSecret($created['id'], 'other-site', 'aseo_wh_EXAMPLE00000000');
+            self::fail('cross-site secret update accepted');
+        } catch (\InvalidArgumentException) {
+        }
+
+        // Untouched by the failed attempts.
+        $found = $this->webhooks->findBySlug('autoseo-x');
+        self::assertSame($created['secret'], $found['secret']);
     }
 
     public function testDeliveryLifecycle(): void

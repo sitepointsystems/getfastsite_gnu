@@ -66,7 +66,8 @@ final class LanguagesHandler implements RequestHandlerInterface
         } catch (\InvalidArgumentException $e) {
             return ApiResponse::error($e->getMessage(), 422);
         }
-        $uuid = $this->queue->enqueue('translate_content', $handle, ['trigger' => 'api'], 'default', 'translate:' . $handle);
+        $uuid = $this->queue->enqueue('translate_content', $handle, ['trigger' => 'api'], 'low', 'translate:' . $handle);
+        $this->queue->promoteNow($uuid);
         $this->audit->log($access, 'language.add', $handle, 'locale:' . ($body['locale'] ?? ''), [], ApiHelpers::clientIp($request));
 
         return ApiResponse::success(['locales' => $locales, 'translation_job' => $uuid], 201);

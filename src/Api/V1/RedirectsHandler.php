@@ -19,6 +19,11 @@ use Psr\Http\Server\RequestHandlerInterface;
  *   GET    /api/v1/sites/{site}/redirects      (sites:read)  — list (+ missing)
  *   POST   /api/v1/sites/{site}/redirects      (sites:write) — create/update
  *   DELETE /api/v1/sites/{site}/redirects/{id} (sites:write) — delete
+ *
+ * POST body: {from_path, to_path, status?}. `status` may be 301/302/307/308,
+ * or 410 to mark the path permanently Gone — in which case `to_path` is
+ * omitted (a 410 has no successor). A 410 is answered for real only in
+ * direct serve mode; a CDN's _redirects cannot express it.
  */
 final class RedirectsHandler implements RequestHandlerInterface
 {
@@ -58,13 +63,13 @@ final class RedirectsHandler implements RequestHandlerInterface
 
         $body = ApiHelpers::jsonBody($request);
         try {
-            $this->redirects->save($handle, (string) ($body['from_path'] ?? ''), (string) ($body['to_path'] ?? ''), (int) ($body['status'] ?? 301));
+            $saved = $this->redirects->save($handle, (string) ($body['from_path'] ?? ''), (string) ($body['to_path'] ?? ''), (int) ($body['status'] ?? 301));
         } catch (\InvalidArgumentException $e) {
             return ApiResponse::error($e->getMessage(), 422);
         }
         $this->publish->trigger($site, 'publish: redirect changed (api)', 'api');
         $this->audit->log($access, 'redirect.save', $handle, 'redirect', [], ApiHelpers::clientIp($request));
 
-        return ApiResponse::success(['redirects' => $this->redirects->list($handle)]);
+        return ApiResponse::success(['saved' => $saved, 'redirects' => $this->redirects->list($handle)]);
     }
 }

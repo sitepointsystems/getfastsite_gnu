@@ -1,0 +1,41 @@
+{% extends 'dash-layout.html.twig' %}
+
+{% block body %}
+<h1>{{ site.name }}</h1>
+<p class="sub">Audit — what the last build found. A <strong>failure</strong> blocks publishing; a <strong>warning</strong> ships but costs you something, usually in search results or page speed.</p>
+{% include 'site-nav.html.twig' %}
+
+<div class="card">
+  {% if audit.at == '' %}
+    <h2 style="margin-top:0">No audit yet</h2>
+    {# A site that has not built since this shipped has nothing stored. Say so
+       plainly rather than rendering an empty table, which reads as "all clear"
+       and is the one wrong answer available here. #}
+    <p class="mut">Nothing has been built since auditing started recording. Press <strong>Build &amp; publish</strong> above and this fills in.</p>
+  {% else %}
+    <h2 style="margin-top:0">
+      {% if audit.fails %}<span class="badge err">{{ audit.fails }} failing</span>{% endif %}
+      {% if audit.warns %}<span class="badge warn">{{ audit.warns }} warning{{ audit.warns == 1 ? '' : 's' }}</span>{% endif %}
+      {% if not audit.fails and not audit.warns %}<span class="badge ok">All clear</span>{% endif %}
+    </h2>
+    <p class="mut">From the build at <span class="mono">{{ audit.at }}</span>. Re-run it with <strong>Build &amp; publish</strong>.</p>
+
+    {% if audit.findings %}
+    <table style="margin-top:1rem">
+      <tr><th>Severity</th><th>Where</th><th>What</th></tr>
+      {% for f in audit.findings %}
+      <tr>
+        <td><span class="badge {{ f.severity == 'FAIL' ? 'err' : 'warn' }}">{{ f.severity }}</span></td>
+        <td class="mono">{{ f.page }}</td>
+        <td>{{ f.message }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    <p class="mut" style="margin-top:1rem">
+      <span class="mono">(site)</span> findings apply to the whole site, not one page.
+      Everything here is checked again on every build, so a fix disappears from this list rather than needing to be dismissed.
+    </p>
+    {% endif %}
+  {% endif %}
+</div>
+{% endblock %}

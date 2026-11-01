@@ -54,7 +54,7 @@ final class ContentUpdateHandler implements RequestHandlerInterface
 
         $this->audit->log($access, 'content.update', $handle, 'content:' . $id, [], ApiHelpers::clientIp($request));
 
-        $data = ApiHelpers::contentToArray($updated);
+        $data = ApiHelpers::contentToArray($updated, $site);
         if ($factCheck !== null) {
             $data['fact_check'] = $factCheck;
         }

@@ -50,6 +50,6 @@ final class ContentRestoreHandler implements RequestHandlerInterface
 
         $this->audit->log($access, 'content.restore', $handle, 'content:' . $id, [], ApiHelpers::clientIp($request));
 
-        return ApiResponse::success(ApiHelpers::contentToArray($restored));
+        return ApiResponse::success(ApiHelpers::contentToArray($restored, $site));
     }
 }

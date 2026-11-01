@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Fastsite\Shared\Queue;
 
+use Fastsite\Build\Service\PublishTrigger;
 use Fastsite\Shared\Clock\Clock;
 use Fastsite\Shared\Database\SiteDatabaseManager;
 use Fastsite\Site\Repository\SiteRepository;
+use Fastsite\Translation\Service\TranslationService;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -22,6 +24,19 @@ final class Scheduler
     private const NIGHTLY_BACKUP_HOUR = 2;
     private const PUBLISH_SNAPSHOT_MIN_INTERVAL_SECONDS = 600;
 
+    /**
+     * Dead-pipeline revival cooldown: when a site's pipeline recently
+     * dead-lettered, the reconciler waits before re-triggering — escalating
+     * with each dead job in the last 24h (30min, 1h, 2h, 4h, capped at 6h).
+     * Without this the level-based trigger re-spawned a doomed pipeline at
+     * tick speed; with it, a broken gateway/key costs one short probe every
+     * few hours and the site heals AUTOMATICALLY the moment the cause is
+     * fixed. User-initiated publishes (dashboard, API, webhook, Retry) are
+     * never gated — this dampens only the scheduler's own safety net.
+     */
+    private const REVIVAL_BASE_COOLDOWN_SECONDS = 1800;
+    private const REVIVAL_MAX_COOLDOWN_SECONDS = 21600;
+
     private int $lastRescue = 0;
     private ?string $lastNightlyBackupDate = null;
 
@@ -30,6 +45,8 @@ final class Scheduler
         private readonly SiteDatabaseManager $databases,
         private readonly JobQueue $queue,
         private readonly JobRunner $runner,
+        private readonly PublishTrigger $publishTrigger,
+        private readonly TranslationService $translations,
         private readonly Clock $clock,
         private readonly LoggerInterface $logger,
     ) {
@@ -41,8 +58,22 @@ final class Scheduler
             try {
                 $this->tick();
             } catch (\Throwable $e) {
-                // The loop never dies — log and keep ticking (conzent pattern).
+                // The loop never dies — log and keep ticking (house pattern).
                 $this->logger->error('Scheduler tick failed', ['error' => $e->getMessage()]);
+            } finally {
+                // Same reason as JobRunner's per-job release: a restore in a
+                // worker swaps the site.db FILE, and this process holds its
+                // own connection cache for the life of the loop. The content
+                // reconciler reads EVERY site every tick, so a stale handle
+                // here does not merely serve old rows — it re-triggers builds
+                // from the pre-restore ones, which looks like self-healing.
+                // In the finally rather than after the catch: a throwing tick
+                // is exactly when the handles are most likely to be wrong.
+                try {
+                    $this->databases->closeSites();
+                } catch (\Throwable $e) {
+                    $this->logger->warning('Could not release site connections after a tick', ['error' => $e->getMessage()]);
+                }
             }
 
             if ($once) {
@@ -113,6 +144,14 @@ final class Scheduler
                 );
             }
             $this->queue->enqueue(type: 'prune_backups', payload: ['trigger' => 'schedule'], queue: 'low', dedupeKey: 'prune:backups');
+
+            // Held spam ages out here rather than on its own timer. It is the
+            // same once-a-day, level-based shape, and riding this block gets
+            // the catch-up-after-downtime and no-duplicate-after-restart
+            // behaviour for free instead of duplicating the day-gate. One job
+            // sweeps every site, since each carries its own retention window.
+            $this->queue->enqueue(type: 'purge_spam', payload: ['trigger' => 'schedule'], queue: 'low', dedupeKey: 'purge:spam');
+
             $this->lastNightlyBackupDate = $today;
             $this->logger->info('Nightly backups enqueued', ['date' => $today]);
         } catch (\Throwable $e) {
@@ -258,17 +297,41 @@ final class Scheduler
 
     /**
      * LEVEL-based deploy trigger (not edge-based): whenever published
-     * content is newer than the last successful build's START, enqueue a
-     * deduped build. Self-heals every failure mode around "flipped in
-     * site.db but the enqueue was lost" — including content published
-     * while a build was already running (its snapshot predates the flip).
+     * content is newer than the last successful build's START — or a
+     * multilingual site has pending TRANSLATION work with nothing driving
+     * it (a dead translate job used to strand missing locales forever) —
+     * enqueue a deduped pipeline run. Self-heals every failure mode around
+     * "flipped in site.db but the enqueue was lost", including content
+     * published while a build was already running.
      */
     private function reconcileUnbuiltContent(): void
     {
+        // In-flight = pending, or running with a LIVE heartbeat. The dedupe
+        // key only coalesces PENDING twins, so without this check every
+        // 60s tick spawned a NEW translate/build job while the previous one
+        // was still running — and when a worker kept getting killed mid-run
+        // (deploy, OOM), that manufactured an unbounded pile of zombie
+        // "running" rows, one per tick. A running row whose heartbeat has
+        // gone stale is a zombie, NOT in-flight — it must never block the
+        // reconciler (the sweep/Retry clean it up independently).
+        $staleCutoff = $this->clock->now()->sub(new \DateInterval('PT900S'))->format('Y-m-d\TH:i:s\Z');
+
         foreach ($this->sites->all() as $site) {
             try {
+                // TRASHED ROWS COUNT, and leaving them out was a real bug:
+                // `softDelete` bumps `updated_at` and leaves `status` alone,
+                // so a deletion raises this level exactly as an edit does —
+                // but `deleted_at IS NULL` hid the one row that had just
+                // changed, and a deletion is the only content change that
+                // LOWERS the maximum of what is left. So nothing was ever
+                // queued: a page deleted over MCP or the REST API stayed live
+                // indefinitely, with the row in the trash on every screen and
+                // no build to take it off the CDN. (Measured: 7+ minutes and
+                // counting on a real site, with the content row already gone.)
+                // Drafts stay out via the status filter — a draft never had a
+                // page, so deleting one changes no output.
                 $newest = $this->databases->site($site->handle)->fetchOne(
-                    "SELECT MAX(updated_at) FROM content WHERE status = 'published' AND deleted_at IS NULL",
+                    "SELECT MAX(updated_at) FROM content WHERE status = 'published'",
                 );
                 if ($newest === false || $newest === null) {
                     continue;
@@ -280,34 +343,66 @@ final class Scheduler
                     [$site->handle],
                 );
 
-                if ($lastBuildStart !== false && (string) $newest <= (string) $lastBuildStart) {
+                $unbuilt = $lastBuildStart === false || (string) $newest > (string) $lastBuildStart;
+
+                // Translation gap: the built output covers the content, but
+                // locales are missing/stale and no job is driving them (the
+                // one that was died). Without this branch, work created by
+                // add-language or a failed run only resumed on the next
+                // content edit or a manual Retry.
+                $translationGap = !$unbuilt && $site->locales !== [] && $this->translations->hasPendingWork($site);
+                if (!$unbuilt && !$translationGap) {
                     continue; // deployed output already covers everything
                 }
 
-                if ($site->locales !== []) {
-                    // Multilingual: refresh translations first, which then
-                    // chains the build+publish itself.
-                    $this->queue->enqueue(
-                        type: 'translate_content',
-                        siteHandle: $site->handle,
-                        payload: ['trigger' => 'schedule'],
-                        queue: 'default',
-                        dedupeKey: 'translate:' . $site->handle,
-                    );
-                } else {
-                    $this->queue->enqueue(
-                        type: 'build_full',
-                        siteHandle: $site->handle,
-                        payload: ['trigger' => 'schedule'],
-                        queue: 'high',
-                        dedupeKey: 'build:' . $site->handle,
-                        chain: [['type' => 'publish_git', 'payload' => ['message' => 'publish: content changes']]],
-                    );
+                $inFlight = $this->databases->engine()->fetchOne(
+                    "SELECT 1 FROM jobs
+                     WHERE site_handle = ? AND type IN ('translate_content', 'build_full', 'publish_git', 'publish_ftp')
+                       AND (status = 'pending' OR (status = 'running' AND heartbeat_at >= ?))
+                     LIMIT 1",
+                    [$site->handle, $staleCutoff],
+                );
+                if ($inFlight !== false) {
+                    continue; // the pipeline is already on it — re-check next tick
                 }
+
+                if ($this->inRevivalCooldown($site->handle)) {
+                    continue; // recently dead-lettered — wait out the escalating cooldown
+                }
+
+                // PublishTrigger decides the route: translate first only when
+                // translation work actually exists, else straight to build.
+                $this->publishTrigger->trigger($site, 'publish: content changes', 'schedule');
             } catch (\Throwable $e) {
                 $this->logger->error('reconcileUnbuiltContent failed for site', ['site' => $site->handle, 'error' => $e->getMessage()]);
             }
         }
+    }
+
+    /**
+     * Whether the site's pipeline dead-lettered recently enough that the
+     * reconciler should hold off. Level-based off the jobs table: N dead
+     * pipeline jobs in the last 24h → wait min(6h, 30min·2^(N-1)) after the
+     * newest one before auto-reviving. No dead jobs → no cooldown.
+     */
+    private function inRevivalCooldown(string $handle): bool
+    {
+        $windowStart = $this->clock->now()->sub(new \DateInterval('PT86400S'))->format('Y-m-d\TH:i:s\Z');
+        $row = $this->databases->engine()->fetchAssociative(
+            "SELECT COUNT(*) AS n, MAX(finished_at) AS last FROM jobs
+             WHERE site_handle = ? AND type IN ('translate_content', 'build_full', 'publish_git', 'publish_ftp')
+               AND status = 'dead' AND finished_at > ?",
+            [$handle, $windowStart],
+        );
+        if ($row === false || (int) $row['n'] === 0) {
+            return false;
+        }
+        $deadCount = (int) $row['n'];
+
+        $cooldown = min(self::REVIVAL_MAX_COOLDOWN_SECONDS, self::REVIVAL_BASE_COOLDOWN_SECONDS * (2 ** min(4, $deadCount - 1)));
+        $reviveAt = (new \DateTimeImmutable((string) $row['last']))->add(new \DateInterval('PT' . $cooldown . 'S'));
+
+        return $this->clock->now() < $reviveAt;
     }
 
     /**

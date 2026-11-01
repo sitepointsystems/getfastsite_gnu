@@ -202,4 +202,99 @@ final class ComponentTest extends TestCase
         self::assertStringNotContainsString('onclick', $result['html']);
         self::assertNotSame([], $result['warnings']);
     }
+
+    public function testVerbatimComponentShipsActiveContentAsTrustedEmbed(): void
+    {
+        // Verbatim = the output ships AS AUTHORED — script, handlers and all —
+        // wrapped in the data-fs-embed trusted-region marker so PageAudit
+        // exempts it exactly like verbatim content and file widgets.
+        $this->service->upsert($this->site, 'widget', [
+            'type' => 'html',
+            'source_code' => '<div id="w">go</div><script>document.getElementById("w").onclick=()=>1;</script><button onclick="x()">c</button>',
+            'verbatim' => true,
+        ]);
+
+        $result = $this->renderer->expand('cmptest', '<div data-fs-component="widget"></div>', 'en');
+
+        self::assertStringContainsString('<script>', $result['html']);
+        self::assertStringContainsString('onclick="x()"', $result['html']);
+        self::assertStringContainsString('<div data-fs-embed>', $result['html']);
+        self::assertSame([], $result['warnings'], 'Verbatim output is trusted — no strip, no warning.');
+    }
+
+    public function testTogglingVerbatimChangesTheOutputDespiteTheRenderCache(): void
+    {
+        $source = '<b>x</b><script>1</script>';
+        $this->service->upsert($this->site, 'toggle', ['type' => 'html', 'source_code' => $source]);
+        $body = '<div data-fs-component="toggle"></div>';
+
+        $stripped = $this->renderer->expand('cmptest', $body, 'en');
+        self::assertStringNotContainsString('<script', $stripped['html']);
+
+        // Same source, same values, same locale — only the flag flips. The
+        // flag is in the cache key, so this must NOT replay the stripped render.
+        $this->service->upsert($this->site, 'toggle', ['type' => 'html', 'source_code' => $source, 'verbatim' => true]);
+        $verbatim = $this->renderer->expand('cmptest', $body, 'en');
+        self::assertStringContainsString('<script>1</script>', $verbatim['html']);
+
+        $this->service->upsert($this->site, 'toggle', ['type' => 'html', 'source_code' => $source, 'verbatim' => false]);
+        $back = $this->renderer->expand('cmptest', $body, 'en');
+        self::assertStringNotContainsString('<script', $back['html']);
+    }
+
+    public function testVerbatimOmittedOnUpdateKeepsTheStoredFlag(): void
+    {
+        $this->service->upsert($this->site, 'keep', ['type' => 'html', 'source_code' => '<i>a</i>', 'verbatim' => true]);
+
+        // An agent PUTting only new source must not silently strip a widget.
+        $c = $this->service->upsert($this->site, 'keep', ['type' => 'html', 'source_code' => '<i>b</i>']);
+        self::assertTrue($c->verbatim);
+
+        $c = $this->service->upsert($this->site, 'keep', ['type' => 'html', 'source_code' => '<i>b</i>', 'verbatim' => false]);
+        self::assertFalse($c->verbatim);
+    }
+
+    public function testVerbatimHtmlRelaxesTheEscapePrimitiveLint(): void
+    {
+        // Browser code legitimately probes globalThis/process/eval — for a
+        // VERBATIM html component none of it ever runs on the build host
+        // (renderHtml is pure string substitution), so the lint stands down.
+        $source = '<script>if(typeof globalThis!=="undefined"&&!window.process){eval("1")}</script>';
+
+        $c = $this->service->upsert($this->site, 'browserish', ['type' => 'html', 'source_code' => $source, 'verbatim' => true]);
+        self::assertSame('ready', $c->status);
+
+        // The same source WITHOUT verbatim keeps the strict lint.
+        $this->expectException(\InvalidArgumentException::class);
+        $this->service->upsert($this->site, 'browserish2', ['type' => 'html', 'source_code' => $source]);
+    }
+
+    public function testVerbatimNeverRelaxesTheReactLint(): void
+    {
+        // React source genuinely executes on the build host — verbatim only
+        // changes what happens to the OUTPUT, never the render sandbox.
+        $this->expectException(\InvalidArgumentException::class);
+        $this->service->upsert($this->site, 'reacteval', [
+            'type' => 'react',
+            'source_code' => "export default function E(){ eval('1'); return null; }",
+            'verbatim' => true,
+        ]);
+    }
+
+    public function testPreVerbatimRawCacheRowsAreStillStrippedOnRead(): void
+    {
+        // Renders used to be cached RAW (the strip happened at replacement
+        // time); rows written by the old code must not ship unstripped
+        // through the new read path.
+        $this->service->upsert($this->site, 'legacy', ['type' => 'html', 'source_code' => '<b>ok</b>']);
+        $component = $this->repository->findByHandle('cmptest', 'legacy');
+        \assert($component !== null);
+
+        $cacheKey = hash('sha256', $component->bundleHash . "\x1f" . 'v0' . "\x1f" . json_encode([]) . "\x1f" . 'en');
+        $this->repository->storeRender('cmptest', $cacheKey, $component->id, '<b>ok</b><script>alert(1)</script>');
+
+        $result = $this->renderer->expand('cmptest', '<div data-fs-component="legacy"></div>', 'en');
+        self::assertStringContainsString('<b>ok</b>', $result['html']);
+        self::assertStringNotContainsString('<script', $result['html']);
+    }
 }

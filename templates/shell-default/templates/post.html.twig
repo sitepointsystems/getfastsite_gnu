@@ -1,18 +1,35 @@
 {% extends 'base.html.twig' %}
 
 {% block main %}
+{% set toc = content.toc|default([]) %}
 <article class="section article">
-  <div class="wrap reading">
-    <header class="article-header">
-      <h1>{{ content.title }}</h1>
-      <p class="article-meta">
-        {% if content.published_at %}<time datetime="{{ content.published_at }}">{{ content.published_at|date('M j, Y') }}</time>{% endif %}
-        {% if content.author_name %} · {{ content.author_name }}{% endif %}
-      </p>
-    </header>
-    {% if content.featured_html %}<figure class="article-featured">{{ content.featured_html|raw }}</figure>{% endif %}
-    <div class="article-body">
-      {{ content.body_html|raw }}
+  <div class="wrap">
+    <div class="article-cols{{ toc|length >= 3 ? ' has-toc' }}">
+      {% if toc|length >= 3 %}
+      <nav class="post-toc" data-fs-toc aria-label="{{ t('on_this_page') }}">
+        <p class="toc-title">{{ t('on_this_page') }}</p>
+        <ol>
+          {% for h in toc %}<li class="toc-l{{ h.level }}"><a href="#{{ h.id }}">{{ h.text }}</a></li>{% endfor %}
+        </ol>
+      </nav>
+      {% endif %}
+      <div class="reading article-main">
+        {% include 'partials/breadcrumb.html.twig' %}
+        <header class="article-header">
+          <h1>{{ content.title }}</h1>
+          <p class="article-meta">
+            {% if content.published_at %}<time datetime="{{ content.published_at }}">{{ content.published_at|date('M j, Y') }}</time>{% endif %}
+            {% if content.author_name %} · {{ content.author_name }}{% endif %}
+          </p>
+        </header>
+        {% if content.featured_html %}<figure class="article-featured">{{ content.featured_html|raw }}</figure>{% endif %}
+        {% if content.tldr_html %}<aside class="article-tldr"><p class="box-label">{{ t('tldr') }}</p>{{ content.tldr_html|raw }}</aside>{% endif %}
+        {% if content.intro_html %}<div class="article-intro">{{ content.intro_html|raw }}</div>{% endif %}
+        <div class="article-body">
+          {{ content.body_html|raw }}
+        </div>
+        {% if content.conclusion_html %}<section class="article-conclusion"><p class="box-label">{{ t('conclusion') }}</p>{{ content.conclusion_html|raw }}</section>{% endif %}
+      </div>
     </div>
   </div>
 </article>

@@ -41,8 +41,8 @@ final class UserService
         if (\strlen($password) < 12) {
             throw new \InvalidArgumentException('Password must be at least 12 characters.');
         }
-        if (!\in_array($role, ['admin', 'user'], true)) {
-            throw new \InvalidArgumentException('Role must be admin or user.');
+        if (!\in_array($role, ['admin', 'editor', 'user'], true)) {
+            throw new \InvalidArgumentException('Role must be admin, editor or user.');
         }
 
         $db = $this->databases->engine();
@@ -95,10 +95,73 @@ final class UserService
         ], ['id' => $userId]);
     }
 
+    /**
+     * Admin edit of the account identity. Email is the login AND what team
+     * invites match on, so it is normalized exactly like createUser does.
+     */
+    public function updateProfile(int $userId, string $email, string $name): void
+    {
+        $email = mb_strtolower(trim($email));
+        if (filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
+            throw new \InvalidArgumentException('Invalid email address.');
+        }
+
+        $db = $this->databases->engine();
+        $taken = (bool) $db->fetchOne(
+            'SELECT 1 FROM users WHERE email = ? AND id != ? AND deleted_at IS NULL',
+            [$email, $userId],
+        );
+        if ($taken) {
+            throw new \RuntimeException(sprintf('A user with email %s already exists.', $email));
+        }
+
+        $db->update('users', [
+            'email' => $email,
+            'name' => trim($name),
+            'updated_at' => $this->clock->iso(),
+        ], ['id' => $userId]);
+    }
+
     public function setActive(int $userId, bool $active): void
     {
         $this->databases->engine()->update('users', [
             'is_active' => $active ? 1 : 0,
+            'updated_at' => $this->clock->iso(),
+        ], ['id' => $userId]);
+    }
+
+    /**
+     * Hard delete. FK cascades remove the user's memberships, API keys,
+     * OAuth grants, remember tokens, credentials AND the teams they own
+     * (which cascade their members + invites) — so sites attached to those
+     * teams are detached first, or they'd point at a dead team id. Sites
+     * themselves are never deleted: an orphaned site stays reachable for
+     * admins, who can assign a new owner on /admin/users.
+     */
+    public function deleteUser(int $userId): void
+    {
+        $db = $this->databases->engine();
+        $db->beginTransaction();
+        try {
+            $db->executeStatement(
+                'UPDATE sites SET team_id = NULL WHERE team_id IN (SELECT id FROM teams WHERE owner_user_id = ?)',
+                [$userId],
+            );
+            $db->executeStatement('DELETE FROM users WHERE id = ?', [$userId]);
+            $db->commit();
+        } catch (\Throwable $e) {
+            $db->rollBack();
+            throw $e;
+        }
+    }
+
+    public function setRole(int $userId, string $role): void
+    {
+        if (!\in_array($role, ['admin', 'editor', 'user'], true)) {
+            throw new \InvalidArgumentException('Role must be admin, editor or user.');
+        }
+        $this->databases->engine()->update('users', [
+            'role' => $role,
             'updated_at' => $this->clock->iso(),
         ], ['id' => $userId]);
     }

@@ -14,6 +14,12 @@ namespace Fastsite\Build\Service;
  * of ../. Protocol-relative (//…), external (http…), fragment (#…) and data:
  * URLs are left untouched. Production output is never touched — this runs only
  * for `buildPreview`.
+ *
+ * CSS `url(/…)` gets the same prefix. Shell CSS is inlined into every page, so
+ * a background image a shell names root-absolute (a mega-menu photo, a hero)
+ * resolved against the dashboard's origin in preview and 404'd, while the same
+ * page worked once published. Relative to the PAGE is correct here precisely
+ * because the CSS is inlined: an inline <style> resolves against the document.
  */
 final class PreviewRelativizer
 {
@@ -32,7 +38,14 @@ final class PreviewRelativizer
         if ($base !== '') {
             $html = str_replace('="' . $base . '/', '="/', $html);
             $html = str_replace('="' . $base . '"', '="/"', $html);
+            $html = preg_replace('#\burl\(\s*(["\']?)' . preg_quote($base, '#') . '/#i', 'url($1/', $html) ?? $html;
         }
+
+        $html = preg_replace(
+            '#\burl\(\s*(["\']?)/(?!/)#i',
+            'url($1' . $prefix,
+            $html,
+        ) ?? $html;
 
         $html = preg_replace_callback(
             '/\b(href|src)="\/(?!\/)([^"]*)"/i',

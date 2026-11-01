@@ -39,7 +39,12 @@ return [
     // non-secret client shape (default endpoint + model ids) lives here so the
     // gateway URL/model have sensible defaults when a credential omits them.
     'ai.default_base_url' => rtrim(trim((string) ($_ENV['AI_BASE_URL'] ?? 'https://openrouter.ai/api')), '/') ?: 'https://openrouter.ai/api',
-    'ai.default_model' => trim((string) ($_ENV['AI_MODEL'] ?? '')) ?: 'anthropic/claude-sonnet-latest',
+    'ai.default_model' => trim((string) ($_ENV['AI_MODEL'] ?? '')) ?: '~anthropic/claude-sonnet-latest',
+    // Translation gets its OWN default, deliberately cheap and fast: it is the
+    // highest-volume call the engine makes (a 82-page × 9-locale site is over
+    // a thousand) and the least in need of a frontier model. It is also what
+    // burns a per-account rate limit and parks the whole run.
+    'ai.translate_model' => trim((string) ($_ENV['TRANSLATE_MODEL'] ?? '')) ?: 'google/gemini-2.5-flash-lite',
     'ai.factcheck_model' => trim((string) ($_ENV['FACTCHECK_MODEL'] ?? '')) ?: 'perplexity/sonar',
     'ai.research_model' => trim((string) ($_ENV['RESEARCH_MODEL'] ?? '')) ?: 'perplexity/sonar',
     // Per-call translation timeout (seconds). A large page's body can take

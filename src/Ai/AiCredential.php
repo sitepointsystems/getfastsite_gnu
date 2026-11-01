@@ -17,7 +17,20 @@ final readonly class AiCredential
         public string $model,
         public string $factcheckModel,
         public string $researchModel = '',
+        /**
+         * Model for TRANSLATION specifically. Empty = use {@see $model}.
+         * Separate because translation is the highest-volume call the engine
+         * makes and the least in need of a frontier model — and because on a
+         * per-account rate limit it is what parks the whole run.
+         */
+        public string $translateModel = '',
     ) {
+    }
+
+    /** The model translation should use: its own, else the general one. */
+    public function translateModelOr(string $fallback): string
+    {
+        return $this->translateModel !== '' ? $this->translateModel : ($this->model !== '' ? $this->model : $fallback);
     }
 
     public function isUsable(): bool

@@ -15,7 +15,7 @@
       <div><label>Password <span class="mut">(12+)</span></label><input type="text" name="password" minlength="12" required></div>
       <div class="tight">
         <label>Role</label>
-        <select name="role"><option value="user">user</option><option value="admin">admin</option></select>
+        <select name="role"><option value="user">user</option><option value="editor">editor</option><option value="admin">admin</option></select>
       </div>
       <div class="tight"><button class="button" type="submit">Create</button></div>
     </div>
@@ -44,6 +44,25 @@
         <div style="padding:.75rem 0">
           <form method="post" action="/admin/users/action" class="row" style="margin-bottom:.5rem">
             <input type="hidden" name="_csrf" value="{{ csrf }}">
+            <input type="hidden" name="action" value="edit">
+            <input type="hidden" name="user_id" value="{{ u.id }}">
+            <div><input type="text" name="name" value="{{ u.name }}" placeholder="name"></div>
+            <div><input type="email" name="email" value="{{ u.email }}" required></div>
+            <div class="tight"><button class="button small ghost" type="submit">Save</button></div>
+          </form>
+          <form method="post" action="/admin/users/action" class="row" style="margin-bottom:.5rem">
+            <input type="hidden" name="_csrf" value="{{ csrf }}">
+            <input type="hidden" name="action" value="set-role">
+            <input type="hidden" name="user_id" value="{{ u.id }}">
+            <div class="tight">
+              <select name="role">
+                {% for r in ['user', 'editor', 'admin'] %}<option value="{{ r }}" {{ u.role == r ? 'selected' }}>{{ r }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="tight"><button class="button small ghost" type="submit">Change role</button></div>
+          </form>
+          <form method="post" action="/admin/users/action" class="row" style="margin-bottom:.5rem">
+            <input type="hidden" name="_csrf" value="{{ csrf }}">
             <input type="hidden" name="action" value="reset-password">
             <input type="hidden" name="user_id" value="{{ u.id }}">
             <div><input type="text" name="password" placeholder="new password (12+)" minlength="12" required></div>
@@ -56,11 +75,9 @@
             <div>
               <select name="site">{% for h in site_handles %}<option>{{ h }}</option>{% endfor %}</select>
             </div>
-            <div class="tight">
-              <select name="site_role"><option>editor</option><option>owner</option></select>
-            </div>
-            <div class="tight"><button class="button small ghost" type="submit">Grant site</button></div>
+            <div class="tight"><button class="button small ghost" type="submit">Make owner</button></div>
           </form>
+          <p class="mut" style="font-size:.8rem;margin:.2rem 0 0">Access is via ownership or teams — to give someone non-owner access, add them to a team and attach the site to it.</p>
           {% if memberships[u.id]|default([])|length %}
           <form method="post" action="/admin/users/action" class="row" style="margin-top:.5rem">
             <input type="hidden" name="_csrf" value="{{ csrf }}">
@@ -69,7 +86,16 @@
             <div>
               <select name="site">{% for h in site_handles %}<option>{{ h }}</option>{% endfor %}</select>
             </div>
-            <div class="tight"><button class="button small danger" type="submit">Revoke site</button></div>
+            <div class="tight"><button class="button small danger" type="submit">Remove owner</button></div>
+          </form>
+          {% endif %}
+          {% if u.id != user.id %}
+          <form method="post" action="/admin/users/action" class="row" style="margin-top:.75rem;padding-top:.75rem;border-top:1px solid var(--border)"
+                onsubmit="return confirm('Permanently delete {{ u.email|e('js') }}? Their API keys, OAuth grants and owned teams are removed. Sites remain and keep their content.')">
+            <input type="hidden" name="_csrf" value="{{ csrf }}">
+            <input type="hidden" name="action" value="delete">
+            <input type="hidden" name="user_id" value="{{ u.id }}">
+            <div class="tight"><button class="button small danger" type="submit">Delete user permanently</button></div>
           </form>
           {% endif %}
         </div>

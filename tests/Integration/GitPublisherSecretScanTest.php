@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Fastsite\Tests\Integration;
 
 use Fastsite\Publish\Service\GitPublisher;
+use Fastsite\Publish\Service\SecretScanner;
 use Fastsite\Shared\Clock\SystemClock;
 use Fastsite\Shared\Database\Migrator;
 use Fastsite\Shared\Database\SiteDatabaseManager;
@@ -15,7 +16,7 @@ use Symfony\Component\Process\Process;
 
 /**
  * M12 pre-push secret scan: the publisher must refuse to commit build output
- * that looks like a leaked secret (the conzent IP-leak lesson).
+ * that looks like a leaked secret (learned from a prior IP leak).
  */
 final class GitPublisherSecretScanTest extends TestCase
 {
@@ -38,7 +39,7 @@ final class GitPublisherSecretScanTest extends TestCase
         $this->site = new Site(1, 'pubsite', 'Pub', 'pub.example.com', 'https://pub.example.com', 'en', [], '/blog/{slug}/', '/{slug}/', '', 'main', '', 1, 'active');
 
         $this->databases->provisionSite('pubsite');
-        $this->publisher = new GitPublisher($this->databases, new NullLogger(), 'test', 'test@example.com');
+        $this->publisher = new GitPublisher($this->databases, new NullLogger(), new SecretScanner(new NullLogger()), 'test', 'test@example.com');
     }
 
     protected function tearDown(): void

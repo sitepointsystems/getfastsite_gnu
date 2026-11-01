@@ -22,7 +22,8 @@ final class ContentGetHandler implements RequestHandlerInterface
     public function handle(ServerRequestInterface $request): ResponseInterface
     {
         $handle = (string) $request->getAttribute('site');
-        if ($this->sites->findByHandle($handle) === null) {
+        $site = $this->sites->findByHandle($handle);
+        if ($site === null) {
             return ApiResponse::error('Unknown site: ' . $handle, 404);
         }
 
@@ -31,6 +32,6 @@ final class ContentGetHandler implements RequestHandlerInterface
             return ApiResponse::error('Content not found', 404);
         }
 
-        return ApiResponse::success(ApiHelpers::contentToArray($item));
+        return ApiResponse::success(ApiHelpers::contentToArray($item, $site));
     }
 }

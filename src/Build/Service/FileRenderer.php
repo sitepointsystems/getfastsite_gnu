@@ -74,7 +74,7 @@ final class FileRenderer
             if (\in_array($ext, ['js', 'mjs'], true)) {
                 $used[$file->id] = true;
 
-                return '<div data-fs-embed><script src="' . $this->publicPath($file->id, $file->slug, $file->ext) . '"></script></div>';
+                return '<div data-fs-embed><script src="' . $this->publicPath($file->id, $file->publicSlug(), $file->ext) . '"></script></div>';
             }
 
             // React component (jsx/tsx) — compile to a browser bundle and mount
@@ -94,7 +94,7 @@ final class FileRenderer
 
             return sprintf(
                 '<a href="%s" download>%s</a>',
-                $this->publicPath($file->id, $file->slug, $file->ext),
+                $this->publicPath($file->id, $file->publicSlug(), $file->ext),
                 htmlspecialchars($file->originalName, ENT_QUOTES),
             );
         }, $html) ?? $html;
@@ -133,7 +133,7 @@ final class FileRenderer
 
                 return sprintf(
                     '<a href="%s" download%s>%s</a>',
-                    $this->publicPath($item->id, $item->slug, $item->ext),
+                    $this->publicPath($item->id, $item->publicSlug(), $item->ext),
                     $attrs === '' ? '' : ' ' . $attrs,
                     $inner,
                 );
@@ -158,7 +158,7 @@ final class FileRenderer
         $out = [];
         foreach ($this->repository->loadManyWithVariants($site, $ids) as $id => $item) {
             if ($item->kind === 'file' && $item->status === 'ready') {
-                $out[$id] = ['slug' => $item->slug, 'ext' => $item->ext, 'diskPath' => $item->diskPath];
+                $out[$id] = ['slug' => $item->publicSlug(), 'ext' => $item->ext, 'diskPath' => $item->diskPath];
             }
         }
 

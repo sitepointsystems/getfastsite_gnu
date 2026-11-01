@@ -212,7 +212,7 @@ final class OAuthService
     public function verifyAccessToken(string $token): ?AccessContext
     {
         $row = $this->databases->engine()->fetchAssociative(
-            'SELECT t.*, u.is_active AS user_active, u.deleted_at AS user_deleted
+            'SELECT t.*, u.is_active AS user_active, u.deleted_at AS user_deleted, u.role AS user_role
              FROM oauth_tokens t JOIN users u ON u.id = t.user_id
              WHERE t.access_hash = ?',
             [hash('sha256', $token)],
@@ -229,6 +229,13 @@ final class OAuthService
 
         /** @var list<string> $scopes */
         $scopes = json_decode((string) $row['scopes'], true) ?: [];
+
+        // The 'admin' scope implies every other scope (AccessContext), so cap
+        // it by the user's actual role — a non-admin consenting to a client
+        // that requests 'admin' must not mint an all-scope token.
+        if ((string) $row['user_role'] !== 'admin') {
+            $scopes = array_values(array_diff($scopes, ['admin']));
+        }
 
         // OAuth grants act across all the user's sites (site scoping is via
         // the user's site_users membership, enforced per-tool in the MCP layer).

@@ -45,6 +45,7 @@ final class TeamsScreenHandler implements RequestHandlerInterface
         return $this->dash->render($request, 'teams.html.twig', [
             'title' => 'Teams — fastsite',
             'teams' => $teams,
+            'my_invites' => $this->teams->invitesForEmail((string) $user['email']),
             'open' => $open,
             'members' => $members,
             'invites' => $invites,

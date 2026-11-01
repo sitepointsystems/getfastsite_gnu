@@ -8,7 +8,7 @@ use Fastsite\Http\EngineView;
 use Fastsite\Identity\Service\LoginFlow;
 use Fastsite\Identity\Service\RememberTokenService;
 use Fastsite\Identity\Service\SessionService;
-use Nyholm\Psr7\Response;
+use GuzzleHttp\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;

@@ -13,6 +13,7 @@
       <div>
         <label>Target</label>
         <select name="site">
+          <option value="__all__">Everything — engine + all sites</option>
           <option value="__engine__">engine.db</option>
           {% for s in sites %}<option value="{{ s.handle }}">{{ s.handle }} (full)</option>{% endfor %}
         </select>
@@ -50,7 +51,7 @@
   </div>
 </div>
 
-<h2>Health {% if doctor is null %}<a class="button small ghost" href="?doctor=1">Run doctor</a>{% endif %}</h2>
+<h2>Health {% if doctor is null %}<a class="button small ghost" href="?doctor=1&amp;jobs={{ jobs_tab }}">Run doctor</a>{% endif %}</h2>
 {% if doctor %}
 <table>
   <tr><th>Check</th><th>Status</th><th>Detail</th></tr>
@@ -65,31 +66,67 @@
 {% endif %}
 
 <h2>Jobs</h2>
+<div class="tabs">
+  <a href="?jobs=active" class="{{ jobs_tab == 'active' ? 'active' }}">Running / pending ({{ job_counts.active }})</a>
+  <a href="?jobs=done" class="{{ jobs_tab == 'done' ? 'active' }}">Done ({{ job_counts.done }})</a>
+  <a href="?jobs=failed" class="{{ jobs_tab == 'failed' ? 'active' }}">Failed ({{ job_counts.failed }})</a>
+  <a href="?jobs=all" class="{{ jobs_tab == 'all' ? 'active' }}">All ({{ job_counts.all }})</a>
+  {% if jobs_live %}<span class="mut" style="margin-left:auto;font-size:.8rem;align-self:center">auto-refreshing…</span>{% endif %}
+</div>
 <table>
-  <tr><th>Type</th><th>Site</th><th>Status</th><th>Attempts</th><th>Error</th><th>Created</th><th></th></tr>
+  <tr><th>Type</th><th>Site</th><th>Status</th><th>Progress</th><th>Attempts</th><th>Error</th><th>Created</th><th></th></tr>
   {% for j in jobs %}
   <tr>
     <td class="mono">{{ j.type }}</td>
     <td>{{ j.site_handle ?: '—' }}</td>
     <td><span class="badge {{ j.status }}">{{ j.status }}</span></td>
-    <td>{{ j.attempts }}</td>
+    <td style="max-width:18rem">
+      {% if j.status == 'running' %}
+        {{ j.progress ?: 'working…' }}
+        <span class="mut" style="font-size:.8rem">{% if j.runtime %}· {{ j.runtime }}{% endif %}{% if j.hb_age %} · hb {{ j.hb_age }} ago{% endif %}</span>
+      {% elseif j.status == 'pending' %}
+        {% if j.retry_in %}<span class="mut">retries in {{ j.retry_in }}</span>{% else %}<span class="mut">queued</span>{% endif %}
+      {% elseif j.status == 'done' and j.runtime %}
+        <span class="mut">took {{ j.runtime }}</span>
+      {% elseif j.progress %}
+        <span class="mut">{{ j.progress }}</span>
+      {% endif %}
+    </td>
+    <td>{{ j.attempts }}/{{ j.max_attempts }}</td>
     <td class="mut" style="max-width:16rem">{{ j.error ? j.error|slice(0, 80) }}</td>
     <td class="mut">{{ j.created_at }}</td>
-    <td>
-      {% if j.status in ['dead', 'failed'] %}
+    <td style="white-space:nowrap">
+      {% if j.status in ['pending', 'running'] %}
       <form method="post" action="/admin/ops/action" class="inline">
         <input type="hidden" name="_csrf" value="{{ csrf }}">
-        <input type="hidden" name="action" value="retry-job">
+        <input type="hidden" name="action" value="cancel-job">
         <input type="hidden" name="uuid" value="{{ j.uuid }}">
-        <button class="button small ghost" type="submit">Retry</button>
+        <input type="hidden" name="tab" value="{{ jobs_tab }}">
+        <button class="button small ghost" type="submit">Cancel</button>
+      </form>
+      {% else %}
+      <form method="post" action="/admin/ops/action" class="inline">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="restart-job">
+        <input type="hidden" name="uuid" value="{{ j.uuid }}">
+        <input type="hidden" name="tab" value="{{ jobs_tab }}">
+        <button class="button small ghost" type="submit">Restart</button>
       </form>
       {% endif %}
     </td>
   </tr>
   {% else %}
-  <tr><td colspan="7" class="mut">No jobs yet.</td></tr>
+  <tr><td colspan="8" class="mut">
+    {% if jobs_tab == 'active' %}Nothing running or pending.
+    {% elseif jobs_tab == 'done' %}No finished jobs yet.
+    {% elseif jobs_tab == 'failed' %}No failed jobs — good.
+    {% else %}No jobs yet.{% endif %}
+  </td></tr>
   {% endfor %}
 </table>
+{% if jobs_live %}
+<script>setTimeout(function () { location.replace('/admin/ops?jobs={{ jobs_tab }}'); }, 8000);</script>
+{% endif %}
 
 <h2>Builds</h2>
 <table>

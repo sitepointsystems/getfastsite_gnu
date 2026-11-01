@@ -11,7 +11,9 @@ use PHPUnit\Framework\TestCase;
  * The per-mode CSP emitted into _headers. 'full' must allow blob: — embed
  * loaders (chat widgets, affiliate embeds) boot their payload from a blob:
  * URL, and script-src is the fallback for script-src-elem, so without it the
- * browser blocks the very scripts the site opted in to ship.
+ * browser blocks the very scripts the site opted in to ship. It must equally
+ * allow 'unsafe-eval': attribute-driven runtimes (Alpine et al.) compile
+ * expressions via `new Function()`, which 'unsafe-inline' does NOT cover.
  */
 final class BuildHeadersTest extends TestCase
 {
@@ -28,11 +30,11 @@ final class BuildHeadersTest extends TestCase
         self::assertStringContainsString("script-src 'none'", $this->headers('none'));
     }
 
-    public function testFullModeAllowsHttpsAndBlobScripts(): void
+    public function testFullModeAllowsHttpsBlobAndEvalScripts(): void
     {
         $csp = $this->headers('full');
 
-        self::assertStringContainsString("script-src 'self' 'unsafe-inline' https: blob:", $csp);
+        self::assertStringContainsString("script-src 'self' 'unsafe-inline' 'unsafe-eval' https: blob:", $csp);
         self::assertStringContainsString("frame-ancestors 'self'", $csp);
     }
 
@@ -42,5 +44,6 @@ final class BuildHeadersTest extends TestCase
 
         self::assertStringContainsString("script-src 'unsafe-inline';", $csp);
         self::assertStringNotContainsString('blob:', $csp);
+        self::assertStringNotContainsString('unsafe-eval', $csp);
     }
 }

@@ -51,7 +51,7 @@ final class ContentSanitizer
         }
 
         $config = $config
-            ->allowElement('a', ['href', 'title', 'rel', 'class', 'download', 'data-file-id'])
+            ->allowElement('a', ['href', 'title', 'rel', 'class', 'download', 'target', 'data-file-id'])
             ->allowElement('img', ['src', 'alt', 'width', 'height', 'class', 'loading', 'decoding', 'data-media-id'])
             ->allowElement('video', ['poster', 'width', 'height', 'controls', 'playsinline', 'preload', 'class'])
             ->allowElement('audio', ['controls', 'preload', 'class'])
@@ -94,6 +94,27 @@ final class ContentSanitizer
         }
 
         $clean = $this->sanitizerFor($html)->sanitize($html);
+
+        // target="_blank" survives sanitization (authors want new-tab links),
+        // but every such link must carry rel="noopener" — older browsers
+        // don't imply it, and window.opener hands the destination page a
+        // handle on the authoring tab (reverse tabnabbing). Merge into an
+        // existing rel, never duplicate. The sanitizer's output is
+        // normalized (double-quoted attributes), so the match is exact.
+        $clean = preg_replace_callback(
+            '/<a\b[^>]*\btarget="_blank"[^>]*>/i',
+            static function (array $m): string {
+                $tag = $m[0];
+                if (preg_match('/\brel="([^"]*)"/i', $tag, $rel) === 1) {
+                    return preg_match('/\bnoopener\b/i', $rel[1]) === 1
+                        ? $tag
+                        : str_replace($rel[0], 'rel="' . trim($rel[1] . ' noopener') . '"', $tag);
+                }
+
+                return substr($tag, 0, -1) . ' rel="noopener">';
+            },
+            $clean,
+        ) ?? $clean;
 
         // Only images that go through the media pipeline (data-media-id) may
         // survive — those become <picture> with dimensions/alt at build time.

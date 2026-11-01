@@ -1,0 +1,21 @@
+{#
+  A list cell that cannot wreck the table: the first item as a chip, plus a
+  "+n" chip whose title carries the rest.
+
+  The API-key tables used to print the raw JSON array the `scopes` column
+  stores. That is one unbreakable ~120-character string with no spaces in it,
+  so the cell's `max-width` did nothing, the table grew past the page, and the
+  Status and Revoke columns were drawn on top of the overflow.
+
+  Hover IS the whole disclosure, so it is a plain `title`: native, zero JS,
+  no dialog, and the same way the Media screen hands over a URL too long to
+  show. Takes `items` as a list of strings (use the `json_list` filter on a
+  stored JSON column).
+#}
+{%- if items is empty -%}
+<span class="mut">—</span>
+{%- else -%}
+<span class="chips"><span class="chip">{{ items|first }}</span>
+{%- if items|length > 1 %}<span class="chip more" title="{{ items|slice(1)|join(', ') }}">+{{ items|length - 1 }}</span>{% endif -%}
+</span>
+{%- endif -%}

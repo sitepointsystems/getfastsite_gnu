@@ -49,12 +49,30 @@ tr:hover td{color:var(--text)}
 .badge.ok,.badge.published,.badge.done,.badge.active,.badge.ready{background:rgba(6,214,160,.12);color:var(--ok)}
 .badge.warn,.badge.draft,.badge.pending,.badge.scheduled,.badge.running{background:rgba(245,158,11,.12);color:var(--warn)}
 .badge.err,.badge.failed,.badge.dead,.badge.archived,.badge.revoked,.badge.inactive{background:rgba(239,68,68,.12);color:var(--danger)}
-.badge.mut{background:var(--bg-2);color:var(--text-2)}
+.badge.mut,.badge.cancelled{background:var(--bg-2);color:var(--text-2)}
+        /* A long list in a cell (an API key's scopes) renders as the first chip
+           plus "+n" — see _chiplist.html.twig. The raw JSON array it replaced had
+           no spaces to wrap on, so the table outgrew the page. */
+        .chips{display:inline-flex;flex-wrap:wrap;gap:.3rem;align-items:center;vertical-align:middle}
+        .chip{display:inline-block;border-radius:999px;padding:.08rem .5rem;font-size:.72rem;font-family:var(--mono);white-space:nowrap;background:var(--bg-2);color:var(--text-2);border:1px solid var(--border)}
+        .chip.more{border-style:dashed;color:var(--text);cursor:help}
 label{display:block;font-size:.82rem;color:var(--text-2);margin:.9rem 0 .3rem}
-input[type=text],input[type=email],input[type=password],input[type=url],input[type=number],input[type=datetime-local],select,textarea{width:100%;background:var(--bg-2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:.6rem .75rem;font-size:.95rem;font-family:inherit}
+input[type=text],input[type=email],input[type=password],input[type=url],input[type=number],input[type=datetime-local],input[type=search],select,textarea{width:100%;background:var(--bg-2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:.6rem .75rem;font-size:.95rem;font-family:inherit}
+/* This list is an allowlist, so a type missing from it renders as a bare UA
+   control — no background, no radius, half the height. `search` was, which is
+   how the Content screen's search box shipped unstyled. Its UA chrome also
+   overrides the padding on WebKit unless the appearance is reset. */
+input[type=search]{appearance:none;-webkit-appearance:none}
+input[type=search]::-webkit-search-cancel-button{appearance:none;-webkit-appearance:none;width:.85rem;height:.85rem;cursor:pointer;background:var(--text-2);mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 4l8 8M12 4l-8 8' stroke='%23000' stroke-width='2' stroke-linecap='round' fill='none'/%3E%3C/svg%3E") center/contain no-repeat}
 textarea.code{font-family:var(--mono);font-size:.82rem;min-height:20rem;white-space:pre;line-height:1.5}
 input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
-.button{display:inline-block;background:var(--accent);color:#fff;font-weight:700;border:0;border-radius:8px;padding:.55rem 1.1rem;font-size:.9rem;cursor:pointer}
+/* font:inherit FIRST, and it is load-bearing: without it a <button class="button">
+   renders in the UA's own button font while an <a class="button"> inherits the
+   page font, so the two have different glyph metrics, different intrinsic
+   heights and different baselines — a row mixing them renders as a staircase.
+   Size and weight are re-declared below, so the only thing this changes is the
+   family. */
+.button{font:inherit;display:inline-block;background:var(--accent);color:#fff;font-weight:700;border:0;border-radius:8px;padding:.55rem 1.1rem;font-size:.9rem;cursor:pointer}
 .button:hover{background:var(--accent-hover)}
 .button.small{padding:.3rem .7rem;font-size:.8rem}
 .button.ghost{background:transparent;color:var(--text-2);border:1px solid var(--border)}
@@ -77,7 +95,21 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-
 .tabs a{color:var(--text-2);padding:.3rem .8rem;border-radius:8px;font-size:.9rem}
 .tabs a.active{background:var(--surface);color:var(--text);border:1px solid var(--border)}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:1.25rem;align-items:start}
-@media(max-width:900px){body{grid-template-columns:1fr}.side{position:static;height:auto;flex-direction:row;flex-wrap:wrap}.grid2{grid-template-columns:1fr}}
+/* Mobile: topbar with burger, sidebar off-canvas behind a backdrop */
+.topbar{display:none}
+.side-backdrop{display:none}
+.burger{background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--text);cursor:pointer;padding:.25rem .6rem;font-size:1.1rem;line-height:1}
+@media(max-width:900px){
+  body{grid-template-columns:1fr;padding-top:3.4rem}
+  .topbar{display:flex;position:fixed;top:0;left:0;right:0;height:3.4rem;align-items:center;gap:.6rem;padding:0 1rem;background:var(--bg-2);border-bottom:1px solid var(--border);z-index:60}
+  .side{position:fixed;top:0;left:0;bottom:0;width:16.5rem;max-width:85vw;background:var(--bg);z-index:80;transform:translateX(-105%);transition:transform .2s ease;box-shadow:0 0 40px rgba(0,0,0,.5)}
+  body.nav-open .side{transform:translateX(0)}
+  body.nav-open .side-backdrop{display:block;position:fixed;inset:0;background:rgba(3,7,12,.6);z-index:70}
+  main{padding:1.25rem 1rem}
+  .grid2{grid-template-columns:1fr}
+  /* The avatar lives in the topbar on mobile — not duplicated in the drawer. */
+  .side .av-dd{display:none}
+}
 .filetree{list-style:none;margin:0;padding:0;font-family:var(--mono);font-size:.82rem}
 .filetree li{padding:.15rem 0}
 details summary{cursor:pointer;color:var(--text-2)}
@@ -105,7 +137,7 @@ dialog.modal input[type=text]{margin-top:.5rem}
 .kebab-menu .danger-zone button{color:var(--danger)}
 .kebab-menu .danger-zone button:hover{background:rgba(239,68,68,.1);color:var(--danger)}
 /* Site switcher: a custom dropdown (thumbnail + name) that persists selection
-   across pages, with a small button to enter the site's content area. */
+   across pages; picking a site navigates straight into its content area. */
 .siteswitch{display:flex;gap:.4rem;align-items:stretch;margin:.15rem 0 .35rem}
 .ss-dd{position:relative;flex:1;min-width:0}
 .ss-dd>summary{list-style:none;display:flex;align-items:center;gap:.5rem;cursor:pointer;background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:.35rem .5rem;color:var(--text)}
@@ -121,10 +153,34 @@ dialog.modal input[type=text]{margin-top:.5rem}
 .ss-opt{display:flex;align-items:center;gap:.5rem;width:100%;text-align:left;background:none;border:0;color:var(--text-2);padding:.4rem .5rem;border-radius:7px;cursor:pointer;font:inherit}
 .ss-opt:hover{background:var(--bg-2);color:var(--text)}
 .ss-opt.sel{color:var(--text);background:var(--bg-2)}
-.ss-enter{flex:0 0 auto;display:flex;align-items:center;justify-content:center;padding:.35rem .65rem;text-decoration:none;font-size:1rem;line-height:1}
+.ss-panel form{margin:0}
+/* Top row: workspace switcher (custom dropdown) + account avatar menu */
+.topswitch{display:flex;gap:.5rem;align-items:center;margin:0 0 .6rem;position:relative}
+.topswitch .ws-dd{flex:1;min-width:0}
+.av-dd{flex:0 0 auto}
+.av-dd>summary{background:transparent;border:0;padding:0;border-radius:50%}
+.av-dd>summary:hover .av-circle{border-color:var(--accent)}
+.av-circle{width:2.1rem;height:2.1rem;border-radius:50%;font-size:.9rem;border:1px solid var(--border)}
+.av-dd .ss-panel{min-width:13rem}
+/* Sidebar: the avatar sits at the row's right edge — anchoring its panel to
+   the ROW (av-dd position:static → containing block = .topswitch) makes it
+   span the sidebar instead of clipping off the edge. The topbar keeps the
+   panel right-anchored under the circle. */
+.side .av-dd{position:static}
+.topbar .av-dd .ss-panel{left:auto;right:0}
+.av-who{display:flex;gap:.6rem;align-items:center;padding:.45rem .6rem .55rem;font-size:.8rem;color:var(--text-2);border-bottom:1px solid var(--border);margin-bottom:.25rem;word-break:break-word}
+.topbar .av-dd{flex:0 0 auto}
+.ss-manage{border-top:1px solid var(--border);margin-top:.25rem;padding-top:.5rem;color:var(--accent);text-decoration:none}
 </style>
 </head>
 <body>
+<header class="topbar">
+  <button class="burger" type="button" data-nav-toggle aria-label="Menu">&#9776;</button>
+  {% if brand.has_icon %}<img src="{{ brand.icon_url }}" alt="" style="height:1.4rem;width:auto">{% else %}<span class="dot"></span>{% endif %}
+  <span style="font-weight:700">fastsite</span>
+  <span style="flex:1"></span>
+  {% include '_avatar-menu.html.twig' %}
+</header>
 <nav class="side">
   {% if brand.has_logo %}
     <a href="/"><img class="brand-logo" src="{{ brand.logo_url }}" alt="FastSite"></a>
@@ -133,8 +189,39 @@ dialog.modal input[type=text]{margin-top:.5rem}
   {% else %}
     <p class="brand"><span class="dot"></span> fastsite</p>
   {% endif %}
+  <div class="topswitch">
+    {% if workspaces|length %}
+      {# Workspace selection is a POST (cookie-remembered) — never a URL
+         parameter. Inaccessible ids 403 server-side. Custom dropdown like the
+         site switcher; each option is its own mini-form (works without JS). #}
+      {% set active_workspace = workspaces|filter(w => w.id == current_workspace)|first %}
+      <details class="ss-dd ws-dd">
+        <summary>
+          <span class="ss-current"><span class="ss-name {{ active_workspace ? '' : 'mut' }}">{{ active_workspace ? active_workspace.name : 'All workspaces' }}</span></span>
+          <span class="ss-caret" aria-hidden="true">&#9662;</span>
+        </summary>
+        <div class="ss-panel">
+          <form method="post" action="/workspaces/action">
+            <input type="hidden" name="_csrf" value="{{ csrf }}">
+            <input type="hidden" name="action" value="select">
+            <input type="hidden" name="workspace" value="all">
+            <button type="submit" class="ss-opt {{ current_workspace ? '' : 'sel' }}">All workspaces</button>
+          </form>
+          {% for w in workspaces %}
+          <form method="post" action="/workspaces/action">
+            <input type="hidden" name="_csrf" value="{{ csrf }}">
+            <input type="hidden" name="action" value="select">
+            <input type="hidden" name="workspace" value="{{ w.id }}">
+            <button type="submit" class="ss-opt {{ current_workspace == w.id ? 'sel' }}">{{ w.name }} <span class="mut" style="margin-left:auto">{{ w.site_count }}</span></button>
+          </form>
+          {% endfor %}
+          <a class="ss-opt ss-manage" href="/workspaces">Manage workspaces…</a>
+        </div>
+      </details>
+    {% endif %}
+    {% include '_avatar-menu.html.twig' %}
+  </div>
   {% if nav_sites|length %}
-    <div class="group">Your sites</div>
     <div class="siteswitch" data-siteswitch data-current="{{ current_site }}">
       <details class="ss-dd">
         <summary>
@@ -159,13 +246,12 @@ dialog.modal input[type=text]{margin-top:.5rem}
           {% endfor %}
         </div>
       </details>
-      <a class="button small ss-enter" id="ss-enter" href="/sites/{{ current_site ?: (nav_sites|first).handle }}/content" title="Open content" aria-label="Open content">&#8594;</a>
     </div>
   {% endif %}
   <a class="nav {{ path == '/' ? 'active' }}" href="/">All Sites</a>
   <div class="group">You</div>
-  <a class="nav {{ path == '/account' ? 'active' }}" href="/account">Account</a>
-  <a class="nav {{ path == '/teams' ? 'active' }}" href="/teams">Teams</a>
+  <a class="nav {{ path == '/teams' ? 'active' }}" href="/teams">Teams{% if pending_invites %} <span class="badge warn">{{ pending_invites }}</span>{% endif %}</a>
+  <a class="nav {{ path == '/workspaces' ? 'active' }}" href="/workspaces">Workspaces</a>
   {% if user.role == 'admin' %}
     <div class="group">Admin</div>
     <a class="nav {{ path == '/admin/users' ? 'active' }}" href="/admin/users">Users</a>
@@ -173,15 +259,8 @@ dialog.modal input[type=text]{margin-top:.5rem}
     <a class="nav {{ path == '/admin/ops' ? 'active' }}" href="/admin/ops">Operations</a>
     <a class="nav {{ path == '/admin/access' ? 'active' }}" href="/admin/access">Access</a>
   {% endif %}
-  <div class="push"></div>
-  <div class="who">
-    {{ user.name|default(user.email) }}<br>
-    <form method="post" action="/logout" class="inline">
-      <input type="hidden" name="_csrf" value="{{ csrf }}">
-      <button class="button ghost small" type="submit" style="margin-top:.4rem">Sign out</button>
-    </form>
-  </div>
 </nav>
+<div class="side-backdrop" data-nav-close></div>
 <main>
 {% if flash_ok %}<div class="flash ok">{{ flash_ok }}</div>{% endif %}
 {% if flash_err %}<div class="flash err">{{ flash_err }}</div>{% endif %}
@@ -243,23 +322,34 @@ dialog.modal input[type=text]{margin-top:.5rem}
       var target = form.querySelector('[data-confirm-input]');
       if (target) target.value = matchInput.value.trim();
     }
+    var submitter = pending.submitter;
     close();
     form.dataset.fsConfirmed = '1';
-    if (typeof form.requestSubmit === 'function') form.requestSubmit(); else form.submit();
+    // requestSubmit(submitter) keeps the clicked button's name/value in the
+    // payload. One form with several submit buttons — the media bulk bar —
+    // depends on that: a plain submit() drops the submitter and the server
+    // receives no `action` at all.
+    if (typeof form.requestSubmit === 'function') form.requestSubmit(submitter || undefined);
+    else form.submit();
   });
 
-  function open(form){
+  // Config is read from the clicked BUTTON when it carries its own, else from
+  // the form. That is what lets one form hold several destructive buttons that
+  // each say something different — a form-level-only dialog cannot express it.
+  function open(form, source, submitter){
+    var d = source.dataset;
     pending = {
       form: form,
-      match: form.dataset.confirmMatch || ''
+      submitter: submitter || null,
+      match: d.confirmMatch || ''
     };
-    titleEl.textContent = form.dataset.confirmTitle || 'Please confirm';
-    msgEl.textContent = form.dataset.confirm || 'Are you sure?';
-    okBtn.textContent = form.dataset.confirmOk || 'Confirm';
-    okBtn.className = 'button small' + (form.hasAttribute('data-confirm-danger') ? ' danger' : '');
+    titleEl.textContent = d.confirmTitle || 'Please confirm';
+    msgEl.textContent = d.confirm || 'Are you sure?';
+    okBtn.textContent = d.confirmOk || 'Confirm';
+    okBtn.className = 'button small' + (source.hasAttribute('data-confirm-danger') ? ' danger' : '');
     if (pending.match){
       matchWrap.hidden = false;
-      matchLabel.textContent = form.dataset.confirmMatchLabel || ('Type "' + pending.match + '" to confirm');
+      matchLabel.textContent = d.confirmMatchLabel || ('Type "' + pending.match + '" to confirm');
       matchInput.value = ''; matchInput.style.outline = '';
     } else { matchWrap.hidden = true; }
     dlg.showModal();
@@ -270,9 +360,52 @@ dialog.modal input[type=text]{margin-top:.5rem}
     form.addEventListener('submit', function(e){
       if (form.dataset.fsConfirmed) return;
       e.preventDefault();
-      open(form);
+      open(form, form, e.submitter);
     });
   });
+
+  // <button data-confirm-submit data-confirm="…"> inside any form. Gated on
+  // CLICK rather than on the form's submit event, so sibling submit buttons
+  // in the same form are left alone.
+  document.querySelectorAll('button[data-confirm-submit]').forEach(function(btn){
+    btn.addEventListener('click', function(e){
+      var form = btn.form;
+      if (!form || form.dataset.fsConfirmed) return;
+      e.preventDefault();
+      open(form, btn, btn);
+    });
+  });
+
+  // Bulk selection: one [data-bulk] bar, [data-pick] checkboxes anywhere on
+  // the page (they join the bar's form through the `form` attribute, because
+  // cards contain their own forms and HTML forbids nesting).
+  (function(){
+    var bar = document.querySelector('[data-bulk]');
+    if (!bar) return;
+    var countEl = bar.querySelector('[data-pick-count]');
+    var all = bar.querySelector('[data-pick-all]');
+    var picks = Array.prototype.slice.call(document.querySelectorAll('[data-pick]'));
+    function sync(){
+      var n = 0;
+      picks.forEach(function(p){
+        var row = p.closest('[data-row]');
+        if (row) row.classList.toggle('picked', p.checked);
+        if (p.checked) n++;
+      });
+      if (countEl) countEl.textContent = n === 0 ? 'None selected' : n + ' selected';
+      if (n > 0) bar.setAttribute('data-has-selection', ''); else bar.removeAttribute('data-has-selection');
+      if (all){
+        all.checked = n > 0 && n === picks.length;
+        all.indeterminate = n > 0 && n < picks.length;
+      }
+    }
+    picks.forEach(function(p){ p.addEventListener('change', sync); });
+    if (all) all.addEventListener('change', function(){
+      picks.forEach(function(p){ p.checked = all.checked; });
+      sync();
+    });
+    sync();
+  })();
 
   // Busy overlay for slow synchronous POSTs: <form data-busy="Checking with …">.
   // Registered AFTER the confirm handler so a confirm-gated form only shows the
@@ -285,6 +418,45 @@ dialog.modal input[type=text]{margin-top:.5rem}
       busyMsg.textContent = form.dataset.busy || 'Working…';
       form.querySelectorAll('button[type=submit]').forEach(function(b){ b.disabled = true; });
       if (busyDlg && typeof busyDlg.showModal === 'function') busyDlg.showModal();
+    });
+  });
+
+  // Copy to clipboard: <button data-copy="the text" data-copy-done="copied ✓">.
+  // Feedback is the label itself — a browser dialog is never an option in this
+  // UI — and the value belongs in the element's title too, so a failed copy is
+  // still recoverable by hand instead of leaving the user with nothing.
+  document.querySelectorAll('[data-copy]').forEach(function(btn){
+    var done = btn.getAttribute('data-copy-done') || 'copied ✓';
+    var timer = null;
+    function flash(text){
+      if (btn.dataset.fsCopyLabel === undefined) btn.dataset.fsCopyLabel = btn.textContent;
+      btn.textContent = text;
+      clearTimeout(timer);
+      timer = setTimeout(function(){ btn.textContent = btn.dataset.fsCopyLabel; }, 1600);
+    }
+    // navigator.clipboard exists only in a secure context, so a plain-HTTP dev
+    // host has to fall back rather than silently do nothing.
+    function legacy(text){
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '-1000px';
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+      document.body.removeChild(ta);
+      flash(ok ? done : 'copy failed');
+    }
+    btn.addEventListener('click', function(e){
+      e.preventDefault();
+      var text = btn.getAttribute('data-copy') || '';
+      if (navigator.clipboard && window.isSecureContext){
+        navigator.clipboard.writeText(text).then(function(){ flash(done); }, function(){ legacy(text); });
+      } else {
+        legacy(text);
+      }
     });
   });
 
@@ -318,28 +490,44 @@ dialog.modal input[type=text]{margin-top:.5rem}
       if (!wasOpen) k.classList.add('open');
     });
   });
-  document.addEventListener('click', function(){ document.querySelectorAll('.kebab.open').forEach(function(o){ o.classList.remove('open'); }); });
+  document.addEventListener('click', function(e){
+    // Interacting with controls INSIDE an open menu (e.g. a <select> — its
+    // native dropdown needs the menu to stay mounted) must not close it;
+    // only true outside clicks do. Links/submits inside navigate anyway.
+    if (e.target.closest && e.target.closest('.kebab-menu')) return;
+    document.querySelectorAll('.kebab.open').forEach(function(o){ o.classList.remove('open'); });
+  });
 
-  // Site switcher: picking a site persists it across pages (fs_site cookie) and
-  // updates the trigger + the → button; the button navigates into its content.
+  // Custom dropdowns (site/workspace/avatar): a click outside an open one
+  // closes it. Clicks inside are left alone — options submit or navigate.
+  document.addEventListener('click', function(e){
+    document.querySelectorAll('details.ss-dd[open]').forEach(function(d){
+      if (!d.contains(e.target)) d.removeAttribute('open');
+    });
+  });
+
+  // Mobile burger: toggles the off-canvas sidebar; backdrop click closes.
+  (function(){
+    var burger = document.querySelector('[data-nav-toggle]');
+    if (!burger) return;
+    burger.addEventListener('click', function(){ document.body.classList.toggle('nav-open'); });
+    var backdrop = document.querySelector('[data-nav-close]');
+    if (backdrop) backdrop.addEventListener('click', function(){ document.body.classList.remove('nav-open'); });
+  })();
+
+  // Site switcher: picking a site persists it across pages (fs_site cookie)
+  // and navigates straight into its content area.
   (function(){
     var sw = document.querySelector('[data-siteswitch]');
     if (!sw) return;
     function setCookie(h){ document.cookie = 'fs_site=' + encodeURIComponent(h) + ';path=/;max-age=31536000;samesite=lax'; }
     var activeHandle = sw.getAttribute('data-current');
     if (activeHandle) setCookie(activeHandle); // keep the cookie synced to the page you're on
-    var dd = sw.querySelector('.ss-dd');
-    var enter = sw.querySelector('#ss-enter');
-    var current = sw.querySelector('.ss-current');
     sw.querySelectorAll('[data-ss-opt]').forEach(function(opt){
       opt.addEventListener('click', function(){
         var h = opt.getAttribute('data-handle');
         setCookie(h);
-        if (current) current.innerHTML = opt.innerHTML;
-        if (enter) enter.setAttribute('href', '/sites/' + h + '/content');
-        sw.querySelectorAll('.ss-opt.sel').forEach(function(o){ o.classList.remove('sel'); });
-        opt.classList.add('sel');
-        if (dd) dd.removeAttribute('open');
+        window.location.href = '/sites/' + encodeURIComponent(h) + '/content';
       });
     });
   })();

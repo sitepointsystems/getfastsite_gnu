@@ -29,6 +29,16 @@ final class NullImageOptimizer implements ImageOptimizer
         return $bytes;
     }
 
+    public function lastAttemptFailed(): bool
+    {
+        return false; // a no-op cannot fail
+    }
+
+    public function lastError(): ?string
+    {
+        return null;
+    }
+
     public function isConfigured(): bool
     {
         return false;

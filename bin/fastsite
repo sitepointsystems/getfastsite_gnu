@@ -5,7 +5,7 @@ declare(strict_types=1);
 
 /**
  * fastsite CLI — single entrypoint for every operational command
- * (conzent bin/oci pattern). Run without arguments for usage.
+ * (single-entrypoint house pattern). Run without arguments for usage.
  */
 
 use Fastsite\Build\Service\BuildService;
@@ -126,6 +126,27 @@ try {
             fastsite_out(sprintf('Site "%s" created (id %d). Shell scaffolded, DB migrated.', $site->handle, $site->id));
             break;
 
+        case 'site:development':
+            // The CLI can create sites, and new sites start in development —
+            // so without this an operator who never opens the dashboard has no
+            // way to go live at all.
+            $handle = $args[0] ?? fastsite_fail('usage: site:development <site> --on|--off');
+            $site = $requireSite($handle);
+            if (isset($opts['on']) === isset($opts['off'])) {
+                fastsite_fail('Pass exactly one of --on (hide from search) or --off (go live).');
+            }
+            $on = isset($opts['on']);
+            $updated = $container->get(SiteService::class)->update($site->handle, ['development' => $on ? '1' : '0']);
+            fastsite_out($on
+                ? 'Development mode ON — every page will publish with noindex, nofollow.'
+                : 'Development mode OFF — the site is now indexable by search engines.');
+            if (SiteService::changeNeedsRebuild($site, $updated)) {
+                $uuid = $container->get(Fastsite\Build\Service\PublishTrigger::class)
+                    ->trigger($updated, 'publish: development status changed', 'cli');
+                fastsite_out('Queued build → publish (job ' . $uuid . '). Run queue:work if no worker is up.');
+            }
+            break;
+
         case 'site:list':
             $sites = $container->get(SiteRepository::class)->all();
             if ($sites === []) {
@@ -134,10 +155,13 @@ try {
             }
             foreach ($sites as $site) {
                 fastsite_out(sprintf(
-                    '%-20s %-30s %-10s %s',
+                    '%-20s %-30s %-10s %-14s %s',
                     $site->handle,
                     $site->name,
                     $site->status,
+                    // A site that has quietly been noindexed since launch looks
+                    // identical to a healthy one everywhere else.
+                    $site->development ? 'DEVELOPMENT' : 'live',
                     $site->baseUrl !== '' ? $site->baseUrl : '(no url)',
                 ));
             }
@@ -151,6 +175,10 @@ try {
             break;
 
         case 'site:seed-getfastsite':
+            // Excluded from the public build, which ships no sites.
+            if (!class_exists(Fastsite\Site\Service\MarketingSeeder::class)) {
+                fastsite_fail('site:seed-getfastsite is not part of this build (the public flavour ships no sites).');
+            }
             // Dogfood: stand up getfastsite.com (the marketing site) inside the
             // engine — create the site, install the shell-marketing theme,
             // author the marketing pages + launch post, and build. Idempotent.
@@ -161,7 +189,7 @@ try {
             break;
 
         case 'content:create':
-            $handle = $args[0] ?? fastsite_fail('usage: content:create <site> --title= [--type=post] [--status=draft] [--body=|--body-file=] ...');
+            $handle = $args[0] ?? fastsite_fail('usage: content:create <site> --title= [--type=post] [--status=draft] [--body=|--body-file=] [--intro= --tldr= --conclusion=] ...');
             $site = $requireSite($handle);
 
             $body = (string) ($opts['body'] ?? '');
@@ -178,17 +206,163 @@ try {
                 'title' => (string) ($opts['title'] ?? ''),
                 'excerpt' => (string) ($opts['excerpt'] ?? ''),
                 'body_html' => $body,
+                'intro' => (string) ($opts['intro'] ?? ''),
+                'tldr' => (string) ($opts['tldr'] ?? ''),
+                'conclusion' => (string) ($opts['conclusion'] ?? ''),
                 'status' => (string) ($opts['status'] ?? 'draft'),
                 'scheduled_at' => (string) ($opts['scheduled-at'] ?? ''),
                 'slug' => (string) ($opts['slug'] ?? ''),
                 'author_name' => (string) ($opts['author'] ?? ''),
                 'seo_title' => (string) ($opts['seo-title'] ?? ''),
                 'seo_description' => (string) ($opts['seo-description'] ?? ''),
+                // Page-specific schema.org node(s), merged into the page graph
+                // the build already emits.
+                'json_ld' => (string) ($opts['json-ld'] ?? ''),
+                // The post's category, by slug (posts only).
+                'category' => (string) ($opts['category'] ?? ''),
             ]);
 
             fastsite_out(sprintf('%s #%d "%s" (%s) → %s', $content->type, $content->id, $content->title, $content->status, $content->slug));
             foreach ($content->warnings as $warning) {
                 fastsite_out('  WARN ' . $warning);
+            }
+            break;
+
+        case 'media:alt':
+            // Backfill/regenerate alt text: all ready images with empty alt
+            // (skipping decorative), or every image with --all.
+            $handle = $args[0] ?? fastsite_fail('usage: media:alt <site> [--all]');
+            $site = $requireSite($handle);
+            $all = ($opts['all'] ?? false) === true;
+            $rows = $container->get(SiteDatabaseManager::class)->site($handle)->fetchAllAssociative(
+                "SELECT id, original_name FROM media
+                 WHERE kind = 'image' AND deleted_at IS NULL AND decorative = 0 AND status = 'ready'"
+                . ($all ? '' : " AND TRIM(alt) = ''") . ' ORDER BY id',
+            );
+            if ($rows === []) {
+                fastsite_out($all ? 'No images.' : 'Every image already has alt text.');
+                break;
+            }
+            $mediaService = $container->get(Fastsite\Media\Service\MediaService::class);
+            $changed = 0;
+            foreach ($rows as $row) {
+                $alt = $mediaService->autoAlt($site, (int) $row['id']);
+                if ($alt !== null) {
+                    $changed++;
+                    fastsite_out(sprintf('  #%d %s → "%s"', (int) $row['id'], (string) $row['original_name'], $alt));
+                }
+            }
+            fastsite_out(sprintf('%d image(s) updated.', $changed));
+            if ($changed > 0) {
+                $container->get(JobQueue::class)->enqueue('build_full', $handle, ['trigger' => 'media-alt'], 'high', 'build:' . $handle, Fastsite\Build\Service\PublishTrigger::publishChain($site, 'publish: image alt text generated'));
+                fastsite_out('Rebuild + publish queued.');
+            }
+            break;
+
+        case 'media:regen':
+            // Re-encode variants from the stored originals with the site's
+            // CURRENT image_compression quality (no ShortPixel, no credits) —
+            // how a changed compression level reaches existing images.
+            $handle = $args[0] ?? fastsite_fail('usage: media:regen <site> [--id=N]');
+            $site = $requireSite($handle);
+            $mediaService = $container->get(Fastsite\Media\Service\MediaService::class);
+            $ids = isset($opts['id']) ? [(int) $opts['id']] : $mediaService->imageIds($handle);
+            if ($ids === []) {
+                fastsite_out('No images.');
+                break;
+            }
+            fastsite_out(sprintf('Regenerating variants for %d image(s) at level "%s"…', count($ids), $site->imageCompression));
+            $done = 0;
+            $failed = 0;
+            foreach ($ids as $id) {
+                try {
+                    $mediaService->regenerateVariants($site, (int) $id);
+                    $done++;
+                    fastsite_out(sprintf('  #%d ok', (int) $id));
+                } catch (\Throwable $e) {
+                    $failed++;
+                    fastsite_out(sprintf('  #%d FAILED: %s', (int) $id, $e->getMessage()));
+                }
+            }
+            fastsite_out(sprintf('%d regenerated, %d failed.', $done, $failed));
+            if ($done > 0) {
+                $container->get(JobQueue::class)->enqueue('build_full', $handle, ['trigger' => 'media-regen'], 'high', 'build:' . $handle, Fastsite\Build\Service\PublishTrigger::publishChain($site, 'publish: image variants regenerated'));
+                fastsite_out('Rebuild + publish queued.');
+            }
+            break;
+
+        case 'media:replace':
+            // Swap the bytes behind an existing id: the id, the name and every
+            // embed pointing at it survive, and the emitted filename carries a
+            // new revision so the immutable CDN cache can't serve the old one.
+            $handle = $args[0] ?? fastsite_fail('usage: media:replace <site> <id> <path> [--alt="…"]');
+            $replaceId = (int) ($args[1] ?? fastsite_fail('usage: media:replace <site> <id> <path> [--alt="…"]'));
+            $replacePath = $args[2] ?? fastsite_fail('usage: media:replace <site> <id> <path> [--alt="…"]');
+            $site = $requireSite($handle);
+            if (!is_file($replacePath)) {
+                fastsite_fail('No such file: ' . $replacePath);
+            }
+            $replaced = $container->get(Fastsite\Media\Service\MediaService::class)->replace(
+                $site,
+                $replaceId,
+                (string) file_get_contents($replacePath),
+                basename($replacePath),
+                isset($opts['alt']) ? (string) $opts['alt'] : null,
+            );
+            fastsite_out(sprintf(
+                'Replaced #%d → %s (revision %d, %s%d KB). Every page embedding it follows.',
+                $replaced->id,
+                $replaced->originalName,
+                $replaced->revision,
+                $replaced->width !== null ? sprintf('%dx%d, ', $replaced->width, $replaced->height) : '',
+                intdiv($replaced->bytes, 1024),
+            ));
+            // Through PublishTrigger, not a hand-rolled enqueue: a bare
+            // enqueue absorbed by an already-pending twin inherits ITS older,
+            // incremental payload and can sit out a backoff delay — and this
+            // command changes asset FILENAMES, so a stale build means live
+            // 404s on the pruned old variants.
+            $container->get(Fastsite\Build\Service\PublishTrigger::class)
+                ->trigger($site, 'publish: media #' . $replaced->id . ' replaced', 'media-replace');
+            fastsite_out('Rebuild + publish queued.');
+            break;
+
+        case 'seo:check':
+            $handle = $args[0] ?? fastsite_fail('usage: seo:check <site>');
+            $issues = $container->get(Fastsite\Seo\SeoLengthService::class)->scan($requireSite($handle));
+            if ($issues === []) {
+                fastsite_out('All titles and descriptions are within the Google/Yoast limits.');
+                break;
+            }
+            foreach ($issues as $i) {
+                fastsite_out(sprintf('  #%d %s/%s [%s] %d chars (limit %d): %s', $i['id'], $i['type'], $i['slug'], $i['kind'], $i['length'], $i['limit'], mb_substr($i['text'], 0, 80)));
+            }
+            fastsite_out(sprintf('%d issue(s). Fix with: seo:fix %s', count($issues), $handle));
+            break;
+
+        case 'seo:fix':
+            $handle = $args[0] ?? fastsite_fail('usage: seo:fix <site> [--id=N]');
+            $site = $requireSite($handle);
+            $onlyId = isset($opts['id']) ? (int) $opts['id'] : null;
+            $result = $container->get(Fastsite\Seo\SeoLengthService::class)->fix($site, $onlyId);
+            foreach ($result['items'] as $item) {
+                fastsite_out(sprintf('  #%d %s — %s', $item['id'], $item['slug'], $item['result']));
+                if (isset($item['title'])) {
+                    fastsite_out('    title: ' . $item['title']);
+                    fastsite_out('    description: ' . ($item['description'] ?? ''));
+                }
+            }
+            fastsite_out(sprintf('%d fixed, %d skipped, %d failed.', $result['fixed'], $result['skipped'], $result['failed']));
+            if (!$result['ai']) {
+                fastsite_out('NOTE: no AI available for this site (no OpenRouter credential selected, no endpointr gateway) — only over-long values were truncated.');
+            }
+            if ($result['fixed'] > 0) {
+                // Through PublishTrigger: the rewrites staled the meta
+                // translations on multilingual sites — translate must run
+                // before the build, or the old translated titles ship.
+                $container->get(Fastsite\Build\Service\PublishTrigger::class)
+                    ->trigger($site, 'publish: SEO titles/descriptions fixed to snippet limits', 'seo-fix');
+                fastsite_out('Rebuild + publish queued.');
             }
             break;
 
@@ -211,7 +385,7 @@ try {
 
         case 'build':
             $handle = $args[0] ?? fastsite_fail('usage: build <site>');
-            $stats = $container->get(BuildService::class)->build($requireSite($handle));
+            $stats = $container->get(BuildService::class)->build($requireSite($handle), null, force: true);
             fastsite_out(sprintf(
                 'Built %d page(s): %d written, %d unchanged, %d removed — %s KB in %s ms → %s',
                 $stats->pages,
@@ -242,24 +416,193 @@ try {
                 break;
             }
 
-            $container->get(BuildService::class)->build($site);
-            $result = $container->get(GitPublisher::class)->publish($site, $message);
-            if (!$result['committed']) {
-                fastsite_out('Nothing changed — no commit.' . ($result['pushed'] ? ' Remote synced.' : ''));
-            } else {
+            $container->get(BuildService::class)->build($site, null, force: true);
+
+            // This branch reaches for the publishers directly, so it has to
+            // repeat the serve-mode routing PublishTrigger/PublishGitHandler do
+            // for the queued path — otherwise --sync silently pushes to git and
+            // never uploads to an ftp site's own host.
+            if ($site->serveMode !== 'ftp' || $site->githubRepo !== '') {
+                $result = $container->get(GitPublisher::class)->publish($site, $message);
+                if (!$result['committed']) {
+                    fastsite_out('Nothing changed — no commit.' . ($result['pushed'] ? ' Remote synced.' : ''));
+                } else {
+                    fastsite_out(sprintf(
+                        'Committed %s%s.',
+                        $result['commit'],
+                        $result['pushed'] ? ' and pushed to origin' : ' (no remote configured — commit is local)',
+                    ));
+                }
+            }
+
+            if ($site->serveMode === 'ftp') {
+                $up = $container->get(Fastsite\Publish\Service\FtpPublisher::class)->publish($site);
                 fastsite_out(sprintf(
-                    'Committed %s%s.',
-                    $result['commit'],
-                    $result['pushed'] ? ' and pushed to origin' : ' (no remote configured — commit is local)',
+                    'Uploaded %d file(s) to %s (%d unchanged, %d removed, %s).',
+                    $up['uploaded'],
+                    $up['target'],
+                    $up['skipped'],
+                    $up['deleted'],
+                    $up['bytes'] > 0 ? round($up['bytes'] / 1024) . ' KB' : '0 KB',
                 ));
             }
+            break;
+
+        case 'ftp:test':
+            $handle = $args[0] ?? fastsite_fail('usage: ftp:test <site>');
+            $site = $requireSite($handle);
+            $probe = $container->get(Fastsite\Publish\Service\FtpPublisher::class)->test($site);
+            fastsite_out(($probe['ok'] ? 'OK   ' : 'FAIL ') . $probe['note']);
+            // The protocol conversation is what actually tells you whether it
+            // was the port, the login, the TLS or the passive data channel.
+            // Printed on any failure, and on request when it worked.
+            if (($probe['trace'] ?? '') !== '' && (!$probe['ok'] || isset($opts['verbose']))) {
+                fastsite_out();
+                fastsite_out('--- connection trace ---');
+                foreach (explode("\n", rtrim((string) $probe['trace'])) as $line) {
+                    fastsite_out('  ' . rtrim($line));
+                }
+            }
+            if (!$probe['ok']) {
+                exit(1);
+            }
+            break;
+
+        case 'mail:test':
+            $handle = $args[0] ?? fastsite_fail('usage: mail:test <site> [--to=someone@example.com]');
+            $site = $requireSite($handle);
+            $mailer = $container->get(Fastsite\Form\Service\FormMailer::class);
+
+            // No --to means prove the connection only; with one, send a real
+            // message. A login that works and a delivery that works are
+            // different facts, and only the second one matters to a lead.
+            $to = isset($opts['to']) && \is_string($opts['to']) ? $opts['to'] : '';
+            $mailFailed = false;
+            $trace = '';
+            try {
+                if ($to === '') {
+                    $trace = $mailer->probe($site);
+                    fastsite_out('OK   connected and authenticated to ' . $site->smtpHost . '. Pass --to=you@example.com to send a real test message.');
+                } else {
+                    $mailer->sendTest($site, $to);
+                    fastsite_out('OK   test message sent to ' . $to . ' via ' . $site->smtpHost . '.');
+                }
+            } catch (Fastsite\Mail\MailException $mailError) {
+                $mailFailed = true;
+                fastsite_out('FAIL [' . ($mailError->phase !== '' ? $mailError->phase : 'send') . '] ' . $mailError->getMessage());
+                fastsite_out('     ' . $mailError->hint());
+                $trace = $mailError->conversation;
+            }
+
+            // The SMTP conversation is what distinguishes "wrong port",
+            // "TLS refused", "bad password" and "not allowed to send as that
+            // address" — four failures that otherwise read identically.
+            // Credentials are masked in it.
+            if ($trace !== '' && ($mailFailed || isset($opts['verbose']))) {
+                fastsite_out();
+                fastsite_out('--- SMTP conversation ---');
+                foreach (explode("\n", rtrim($trace)) as $line) {
+                    fastsite_out('  ' . rtrim($line));
+                }
+            }
+            if ($mailFailed) {
+                exit(1);
+            }
+            break;
+
+        case 'forms:list':
+            $handle = $args[0] ?? fastsite_fail('usage: forms:list <site>');
+            $site = $requireSite($handle);
+            $formService = $container->get(Fastsite\Form\Service\FormService::class);
+            $counts = $formService->counts($site->handle);
+            if (!$site->smtpConfigured()) {
+                fastsite_out('WARNING: no SMTP configured — submissions are stored, but nobody is emailed.');
+                fastsite_out();
+            }
+            if ($site->spamMode !== 'on') {
+                fastsite_out('Spam guard: ' . strtoupper($site->spamMode)
+                    . ($site->spamMode === 'log' ? ' (scoring, but still emailing everything)' : ' (not scoring)'));
+                fastsite_out();
+            }
+            foreach ($formService->list($site->handle) as $form) {
+                $c = $counts[$form->id] ?? ['total' => 0, 'pending' => 0, 'failed' => 0, 'spam' => 0];
+                fastsite_out(sprintf(
+                    '%-20s %-30s %d submission(s)%s%s%s  %s%s',
+                    $form->handle,
+                    implode(',', $form->recipients),
+                    $c['total'],
+                    $c['failed'] > 0 ? ', ' . $c['failed'] . ' FAILED' : '',
+                    $c['pending'] > 0 ? ', ' . $c['pending'] . ' queued' : '',
+                    ($c['spam'] ?? 0) > 0 ? ', ' . $c['spam'] . ' held as spam' : '',
+                    $form->enabled ? '' : '[disabled]',
+                    // A form with the challenge ticked and no site keys shows
+                    // NO widget. Saying nothing there would let it read as
+                    // protected on the one surface an operator checks.
+                    $form->turnstile ? ($site->turnstileConfigured() ? ' [challenge]' : ' [challenge: NO KEYS]') : '',
+                ));
+            }
+            break;
+
+        case 'forms:rescore':
+            // Calibration, not cleanup: re-run the scorer over submissions a
+            // human has already judged and print what it WOULD decide. The
+            // only honest way to set a threshold — "these weights catch 37 of
+            // the 39 you called spam" beats "these weights look about right".
+            $handle = $args[0] ?? fastsite_fail('usage: forms:rescore <site> [--apply]');
+            $site = $requireSite($handle);
+            $formService = $container->get(Fastsite\Form\Service\FormService::class);
+            $scorer = $container->get(Fastsite\Form\Spam\SpamScorer::class);
+            $apply = isset($opts['apply']);
+
+            $rows = $formService->rescore(
+                $site->handle,
+                static fn (Fastsite\Form\Dto\Form $f, array $v, string $l): Fastsite\Form\Spam\SpamVerdict
+                    => $scorer->score($f, $v, $l),
+                null,
+                $apply,
+            );
+
+            if ($rows === []) {
+                fastsite_out('No stored submissions to score.');
+                break;
+            }
+
+            $hold = 0;
+            foreach ($rows as $row) {
+                if ($row['would_hold']) {
+                    ++$hold;
+                }
+                fastsite_out(sprintf(
+                    '#%-5d %-8s score %-3d %s%s',
+                    $row['id'],
+                    $row['status'],
+                    $row['score'],
+                    $row['would_hold'] ? 'HOLD  ' : '      ',
+                    $row['reasons'] === [] ? '' : implode(' · ', $row['reasons']),
+                ));
+            }
+            fastsite_out();
+            fastsite_out(sprintf(
+                '%d of %d would be held (threshold %d).%s',
+                $hold,
+                \count($rows),
+                Fastsite\Form\Spam\SpamScorer::THRESHOLD,
+                $apply ? ' Applied.' : ' Dry run — pass --apply to write it.',
+            ));
             break;
 
         case 'queue:work':
             $runner = $container->get(JobRunner::class);
             $maxRuntime = isset($opts['max-runtime']) ? (int) $opts['max-runtime'] : null;
-            fastsite_out('Worker started (BRPOP high/default/low, stale sweep every 5 min). Ctrl+C to stop.');
-            $processed = $runner->work($maxRuntime, isset($opts['once']));
+            $queues = null;
+            if (isset($opts['queues']) && \is_string($opts['queues']) && $opts['queues'] !== '') {
+                $queues = array_values(array_filter(array_map('trim', explode(',', $opts['queues']))));
+            }
+            fastsite_out(sprintf(
+                'Worker started (BRPOP %s, stale sweep every 5 min). Ctrl+C to stop.',
+                implode('/', $queues ?? Fastsite\Shared\Queue\JobQueue::QUEUES),
+            ));
+            $processed = $runner->work($maxRuntime, isset($opts['once']), $queues);
             fastsite_out('Worker stopped after ' . $processed . ' job(s).');
             break;
 
@@ -400,6 +743,22 @@ try {
             fastsite_out('  Also send: X-Delivery-Id: <unique-per-delivery>');
             break;
 
+        case 'webhook:secret':
+            // Store a SENDER-owned credential as the integration secret
+            // (AutoSEO signs with its own aseo_wh_… endpoint token).
+            $id = (int) ($args[0] ?? fastsite_fail('usage: webhook:secret <id> <secret>'));
+            $secret = (string) ($args[1] ?? fastsite_fail('usage: webhook:secret <id> <secret>'));
+            $row = $container->get(SiteDatabaseManager::class)->engine()->fetchAssociative(
+                'SELECT site_handle, slug FROM webhook_integrations WHERE id = ?',
+                [$id],
+            );
+            if ($row === false) {
+                fastsite_fail('webhook integration not found: #' . $id);
+            }
+            $container->get(Fastsite\Webhook\Service\WebhookService::class)->setSecret($id, (string) $row['site_handle'], $secret);
+            fastsite_out('Secret updated for #' . $id . ' (/webhooks/' . $row['slug'] . ').');
+            break;
+
         case 'webhook:list':
             $rows = $container->get(SiteDatabaseManager::class)->engine()->fetchAllAssociative(
                 'SELECT id, slug, site_handle, mapper, active FROM webhook_integrations ORDER BY id',
@@ -480,6 +839,38 @@ try {
                 dedupeKey: 'translate:' . $handle,
             );
             fastsite_out('Queued translation (job ' . $uuid . ').');
+            break;
+
+        case 'translate:reset':
+            // Force re-translation of content whose translations are already
+            // "current" — the only way back when the translations themselves
+            // are wrong (a changed translation rule leaves every stored row
+            // matching its source_hash, so nothing is stale and nothing reruns).
+            $handle = $args[0] ?? fastsite_fail('usage: translate:reset <site> [--id=N]');
+            $site = $requireSite($handle);
+            $id = 0;
+            foreach ($args as $arg) {
+                if (str_starts_with((string) $arg, '--id=')) {
+                    $id = (int) substr((string) $arg, 5);
+                }
+            }
+            $translations = $container->get(Fastsite\Translation\Service\TranslationService::class);
+            $reset = $id > 0 ? $translations->resetContent($site, $id) : $translations->resetAll($site);
+            fastsite_out('Reset ' . $reset . ' translation row(s) ' . ($id > 0 ? 'for content ' . $id : 'across the site') . '.');
+            $queue = $container->get(JobQueue::class);
+            if ($id === 0) {
+                $queue->cancelPending('translate_content', $handle);
+                $queue->cancelStaleRunning('translate_content', $handle);
+            }
+            $uuid = $queue->enqueue(
+                type: 'translate_content',
+                siteHandle: $handle,
+                payload: ['trigger' => 'cli-retranslate'],
+                queue: 'default',
+                dedupeKey: 'translate:' . $handle,
+            );
+            $queue->promoteNow($uuid);
+            fastsite_out('Queued re-translation (job ' . $uuid . ').');
             break;
 
         case 'shell:list':
@@ -659,15 +1050,22 @@ try {
             fastsite_out('  install        --email= --password= [--name=]   first-run bootstrap (migrate + admin user)');
             fastsite_out('  migrate                                         apply pending migrations (engine + all sites)');
             fastsite_out('  site:create    <handle> --name= [--url=] [--repo=] [--locale=]');
-            fastsite_out('  site:list');
+            fastsite_out('  site:list
+  site:development <site> --on|--off               hide from search (noindex on every page) / go live');
             fastsite_out('  site:migrate   [handle]');
-            fastsite_out('  site:seed-getfastsite [--no-build]              dogfood: build getfastsite.com inside the engine');
-            fastsite_out('  content:create <site> --title= [--type=post|page] [--status=] [--body=|--body-file=]');
+            if (class_exists(Fastsite\Site\Service\MarketingSeeder::class)) {
+                fastsite_out('  site:seed-getfastsite [--no-build]              dogfood: build getfastsite.com inside the engine');
+            }
+            fastsite_out('  content:create <site> --title= [--type=post|page] [--status=] [--body=|--body-file=] [--intro= --tldr= --conclusion=] [--json-ld=]');
             fastsite_out('                 [--excerpt=] [--slug=] [--author=] [--seo-title=] [--seo-description=]');
             fastsite_out('                 [--scheduled-at=ISO8601]   (required when --status=scheduled)');
             fastsite_out('  build          <site>                           full static build into build/');
             fastsite_out('  publish        <site> [--message=] [--sync]     queue build+publish chain (--sync = inline)');
-            fastsite_out('  queue:work     [--once] [--max-runtime=SECONDS] the queue worker (one process only)');
+            fastsite_out('  ftp:test       <site> [--verbose]                check the FTP/SFTP target, printing the connection trace on failure');
+            fastsite_out('  mail:test      <site> [--to=] [--verbose]       check SMTP; --to sends a real message. Prints the conversation on failure');
+            fastsite_out('  forms:list     <site>                           forms + submission counts, and whether mail is configured');
+            fastsite_out('  forms:rescore  <site> [--apply]                 re-run the spam scorer over stored submissions (dry run by default)');
+            fastsite_out('  queue:work     [--queues=a,b,c] [--once] [--max-runtime=SECONDS] a queue worker (no --queues = all lanes)');
             fastsite_out('  schedule:run   [--once]                         minute loop: due content, delayed jobs, sweeps');
             fastsite_out('  jobs:list      [--status=] [--limit=20]');
             fastsite_out('  jobs:retry     <uuid>                           requeue a dead/failed job');
@@ -675,7 +1073,15 @@ try {
             fastsite_out('  key:list / key:rotate <id> / key:revoke <id>');
             fastsite_out('  webhook:create <slug> --site= [--mapper=autoseo]   signed inbound webhook + secret');
             fastsite_out('  webhook:list / webhook:deliveries [--limit=20] / webhook:replay <delivery-id>');
+            fastsite_out('  webhook:secret <id> <secret>                        store the sender\'s own token as the secret');
             fastsite_out('  shell:list <site> / shell:snapshot <site> [--note=] / shell:restore <site> <rev>');
+            fastsite_out('  media:alt      <site> [--all]                   generate missing image alt text (AI, filename fallback)');
+            fastsite_out('  media:regen    <site> [--id=N]                  re-encode variants at the site\'s image_compression level');
+            fastsite_out('  media:replace  <site> <id> <path> [--alt=]      swap the content behind an id, keeping every embed');
+            fastsite_out('  translate      <site>                           queue a translation refresh (missing/stale only)');
+            fastsite_out('  translate:reset <site> [--id=N]                 force re-translation of up-to-date content + requeue');
+            fastsite_out('  seo:check      <site>                           flag titles/descriptions outside the Google/Yoast limits');
+            fastsite_out('  seo:fix        <site> [--id=N]                  rewrite them to fit (AI, truncate fallback) + republish');
             fastsite_out('  backup:site    <site> [--kind=full|db|media|shell] [--sync]   snapshot to R2 (or local)');
             fastsite_out('  backup:engine  [--sync] / backup:list [site] / backup:prune');
             fastsite_out('  restore:site   <site> [--db-key=] [--media] [--sync]   restore + rebuild + publish');

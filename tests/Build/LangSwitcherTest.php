@@ -32,6 +32,21 @@ final class LangSwitcherTest extends TestCase
         self::assertStringContainsString('Danish', $html);
     }
 
+    public function testCtaAttributesAreOptInAndStableAcrossPages(): void
+    {
+        // Injected AFTER the CtaAnnotator pass, so the switcher must carry its
+        // own GTM attributes when the site's cta_tracking is on — and none
+        // when it is off.
+        $off = LangSwitcher::render(['en' => '/', 'da' => '/da/'], 'en');
+        self::assertStringNotContainsString('data-cta', $off);
+
+        $on = LangSwitcher::render(['en' => '/', 'da' => '/da/'], 'da', [], true);
+        self::assertStringContainsString('data-cta="lang_da"', $on);
+        self::assertStringContainsString('data-cta-text="Danish"', $on);
+        self::assertStringContainsString('data-cta-language="da"', $on);
+        self::assertStringContainsString('data-cta-location="language_switcher"', $on);
+    }
+
     public function testTriggerInheritsTheHostNavsColorAndTypography(): void
     {
         $html = LangSwitcher::render(['en' => '/', 'da' => '/da/'], 'en');

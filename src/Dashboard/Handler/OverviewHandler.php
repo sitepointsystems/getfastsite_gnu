@@ -10,7 +10,11 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 
-/** GET / — screen 1: sites overview (status, content counts, last build). */
+/**
+ * GET / — screen 1: sites overview (status, content counts, last build),
+ * scoped to the selected workspace (fs_ws cookie; "all" when none).
+ * Workspace management itself lives on /workspaces.
+ */
 final class OverviewHandler implements RequestHandlerInterface
 {
     public function __construct(
@@ -26,7 +30,9 @@ final class OverviewHandler implements RequestHandlerInterface
         $engine = $this->databases->engine();
         $cards = [];
 
-        $sites = $trash ? $this->dash->deletedSitesFor($user) : $this->dash->sitesFor($user);
+        // Trash stays unscoped (recovery must always find the site); the live
+        // overview shows only the selected workspace.
+        $sites = $trash ? $this->dash->deletedSitesFor($user) : $this->dash->visibleSitesFor($request);
         foreach ($sites as $site) {
             $counts = ['published' => 0, 'draft' => 0];
             try {
@@ -48,6 +54,7 @@ final class OverviewHandler implements RequestHandlerInterface
                 'site' => $site,
                 'counts' => $counts,
                 'last_build' => $lastBuild !== false ? $lastBuild : null,
+                'can_manage' => $this->dash->canManageSite($user, $site),
             ];
         }
 

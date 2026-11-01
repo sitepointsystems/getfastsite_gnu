@@ -37,8 +37,12 @@ final class LangSwitcher
     /**
      * @param array<string, string> $links locale => href, current page's built variants, primary first
      * @param array<string, string> $flagUrls locale → '/flags/{cc}.svg' for locales whose flag exists in dist
+     * @param bool $ctaAttrs emit the GTM CTA data attributes on every panel
+     *   link. The switcher is injected AFTER the CtaAnnotator build pass, so
+     *   it must carry its own; the id is locale-derived ("lang_da") so it is
+     *   identical on every page and every language.
      */
-    public static function render(array $links, string $current, array $flagUrls = []): string
+    public static function render(array $links, string $current, array $flagUrls = [], bool $ctaAttrs = false): string
     {
         // Flag <img> for a locale (real SVG copied into dist/flags/), or ''.
         // width/height stay as attributes (CLS contract, not design).
@@ -52,8 +56,15 @@ final class LangSwitcher
         // No style attributes — appearance comes from the defaults below.
         $items = '';
         foreach ($links as $loc => $href) {
+            $cta = $ctaAttrs
+                ? ' data-cta="lang_' . htmlspecialchars(str_replace('-', '_', $loc), ENT_QUOTES) . '"'
+                    . ' data-cta-text="' . $label($loc) . '"'
+                    . ' data-cta-language="' . htmlspecialchars($current, ENT_QUOTES) . '"'
+                    . ' data-cta-location="language_switcher"'
+                : '';
             $items .= '<a href="' . htmlspecialchars($href, ENT_QUOTES) . '" hreflang="' . htmlspecialchars($loc, ENT_QUOTES) . '"'
                 . ($loc === $current ? ' aria-current="true"' : '')
+                . $cta
                 . '>' . $flagImg($loc) . '<span>' . $label($loc) . '</span></a>';
         }
 

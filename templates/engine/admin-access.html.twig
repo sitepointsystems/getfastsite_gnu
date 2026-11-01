@@ -12,8 +12,8 @@
     <td class="mut">{{ k.email }}</td>
     <td>{{ k.name }}</td>
     <td class="mono">fs_{{ k.key_id }}_…</td>
-    <td class="mut" style="max-width:12rem">{{ k.scopes }}</td>
-    <td class="mut">{{ k.sites }}</td>
+    <td>{% include '_chiplist.html.twig' with {items: k.scopes|json_list} only %}</td>
+    <td>{% include '_chiplist.html.twig' with {items: k.sites|json_list} only %}</td>
     <td class="mut">{{ k.last_used_at ?: 'never' }}</td>
     <td>{% if k.revoked_at %}<span class="badge revoked">revoked</span>{% else %}<span class="badge ok">active</span>{% endif %}</td>
     <td>

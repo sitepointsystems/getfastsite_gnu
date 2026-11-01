@@ -18,11 +18,36 @@ use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 
 /**
- * GET /sites/{site}/settings — screen 4: languages, components, shell file
- * tree (+ inline editor via ?file=), snapshots.
+ * GET /sites/{site}/settings — screen 4: site details, components, shell
+ * file tree (+ inline editor via ?file=), snapshots. Languages/translations
+ * live on their own tab (TranslationsScreenHandler).
  */
 final class SettingsScreenHandler implements RequestHandlerInterface
 {
+    /**
+     * The screen is tabbed because it had grown past a thousand lines of
+     * markup, and the tabs are SERVER-SIDE rather than show/hide: the page
+     * genuinely gets smaller instead of merely looking smaller, and the
+     * shell editor's CodeMirror only loads on the tab that uses it.
+     *
+     * Order is the order they render in the nav.
+     */
+    public const TABS = ['general', 'seo', 'publishing', 'email', 'scripts', 'redirects', 'errors', 'shell'];
+
+    public const TAB_LABELS = [
+        'general' => 'General',
+        'seo' => 'SEO',
+        'publishing' => 'Publishing',
+        'email' => 'Email',
+        'scripts' => 'Scripts',
+        'redirects' => 'Redirects',
+        // Next to Redirects on purpose: a 410 rule and a 410 page are the same
+        // decision seen from two sides, and both carry the same per-mode
+        // caveat about what a CDN can actually serve.
+        'errors' => 'Error pages',
+        'shell' => 'Shell',
+    ];
+
     public function __construct(
         private readonly Dash $dash,
         private readonly ShellService $shell,
@@ -32,12 +57,17 @@ final class SettingsScreenHandler implements RequestHandlerInterface
         private readonly RedirectService $redirects,
         private readonly GithubCredentialService $githubCreds,
         private readonly TeamService $teams,
-        private readonly \Fastsite\Ai\AiClientFactory $ai,
+        private readonly \Fastsite\Workspace\Service\WorkspaceService $workspaces,
         private readonly \Fastsite\Ai\AiCredentialService $aiCreds,
+        private readonly \Fastsite\Content\Repository\ContentRepository $content,
         // Whether a global GITHUB_TOKEN exists (bool only — the token itself
         // never reaches a template). The "Publish with" select's fallback
         // option must not pretend a token exists when the env var is empty.
         private readonly bool $globalTokenConfigured = false,
+        // Whether the engine-wide SHORTPIXEL_API_KEY exists (bool only). The
+        // ShortPixel field must say WHICH key is in effect when the site has
+        // none of its own, instead of just looking unconfigured.
+        private readonly bool $engineShortpixelConfigured = false,
     ) {
     }
 
@@ -50,9 +80,21 @@ final class SettingsScreenHandler implements RequestHandlerInterface
 
         $query = $request->getQueryParams();
 
+        // An unknown or absent tab falls back to General, so every existing
+        // link to /settings keeps working rather than 404ing or blanking.
+        $tab = (string) ($query['tab'] ?? '');
+        if (!\in_array($tab, self::TABS, true)) {
+            $tab = 'general';
+        }
+        // Opening a shell file IS the shell tab — a ?file= link from anywhere
+        // else must not land on General with the editor invisible.
+        if (isset($query['file'])) {
+            $tab = 'shell';
+        }
+
         $editFile = null;
         $editContent = '';
-        if (isset($query['file'])) {
+        if ($tab === 'shell' && isset($query['file'])) {
             try {
                 $editFile = (string) $query['file'];
                 $editContent = $this->shell->readFile($site, $editFile);
@@ -61,111 +103,139 @@ final class SettingsScreenHandler implements RequestHandlerInterface
             }
         }
 
+        // Each tab loads only what it renders. Every visit used to pay for
+        // shell files, revisions, images, scripts, redirects, missing paths
+        // and four credential/ownership lookups — for a page someone opened
+        // to change one field.
         $components = [];
         $revisions = [];
         $images = [];
-        try {
-            $components = $this->databases->site($site->handle)->fetchAllAssociative(
-                'SELECT handle, type, status FROM components ORDER BY handle',
-            );
-        } catch (\Throwable) {
-            // Optional panel — never blank the screen.
-        }
-        try {
-            // Image choices for the favicon / logo pickers.
-            $images = $this->databases->site($site->handle)->fetchAllAssociative(
-                "SELECT id, original_name, alt FROM media
-                 WHERE kind = 'image' AND status = 'ready' AND deleted_at IS NULL
-                 ORDER BY id DESC LIMIT 200",
-            );
-        } catch (\Throwable) {
-            // Optional panel — never blank the screen.
-        }
-        try {
-            $revisions = $this->databases->site($site->handle)->fetchAllAssociative(
-                'SELECT rev_no, note, created_by, created_at FROM shell_revisions WHERE deleted_at IS NULL ORDER BY rev_no DESC LIMIT 10',
-            );
-        } catch (\Throwable) {
-            // Optional panel — never blank the screen.
-        }
-
-        // Per-locale translation status so the user can SEE that auto-translate
-        // is working (or why it isn't) — a common "is this broken?" question.
-        $translationStatus = [];
-        if ($site->locales !== []) {
+        if ($tab === 'general') {
             try {
-                $db = $this->databases->site($site->handle);
-                $totalPublished = (int) $db->fetchOne(
-                    "SELECT COUNT(*) FROM content WHERE status = 'published' AND type IN ('post', 'page') AND deleted_at IS NULL",
+                $components = $this->databases->site($site->handle)->fetchAllAssociative(
+                    'SELECT handle, type, status FROM components ORDER BY handle',
                 );
-                $byLocale = [];
-                foreach ($db->fetchAllAssociative(
-                    "SELECT ct.locale AS locale,
-                        SUM(CASE WHEN ct.status = 'failed' THEN 1 ELSE 0 END) AS failed,
-                        SUM(CASE WHEN ct.status = 'manual' THEN 1 ELSE 0 END) AS manual,
-                        SUM(CASE WHEN ct.status = 'translated' AND ct.source_hash = c.content_hash THEN 1 ELSE 0 END) AS translated,
-                        SUM(CASE WHEN ct.status = 'translated' AND ct.source_hash != c.content_hash THEN 1 ELSE 0 END) AS stale
-                     FROM content_translations ct JOIN content c ON c.id = ct.content_id
-                     WHERE c.status = 'published' AND c.deleted_at IS NULL
-                     GROUP BY ct.locale",
-                ) as $r) {
-                    $byLocale[(string) $r['locale']] = $r;
-                }
-                // Latest error message per locale, so a "Failed" badge can say
-                // WHY (e.g. missing/invalid AI key, gateway HTTP error).
-                $errors = [];
-                foreach ($db->fetchAllAssociative(
-                    "SELECT locale, error FROM content_translations
-                     WHERE status = 'failed' AND error IS NOT NULL AND error != ''
-                     ORDER BY updated_at DESC",
-                ) as $e) {
-                    $errors[(string) $e['locale']] ??= (string) $e['error'];
-                }
-                foreach ($site->locales as $loc) {
-                    $r = $byLocale[$loc] ?? [];
-                    $done = (int) ($r['translated'] ?? 0) + (int) ($r['stale'] ?? 0) + (int) ($r['manual'] ?? 0) + (int) ($r['failed'] ?? 0);
-                    $translationStatus[$loc] = [
-                        'translated' => (int) ($r['translated'] ?? 0),
-                        'stale' => (int) ($r['stale'] ?? 0),
-                        'manual' => (int) ($r['manual'] ?? 0),
-                        'failed' => (int) ($r['failed'] ?? 0),
-                        'missing' => max(0, $totalPublished - $done),
-                        'total' => $totalPublished,
-                        'error' => $errors[$loc] ?? '',
-                    ];
-                }
+            } catch (\Throwable) {
+                // Optional panel — never blank the screen.
+            }
+            try {
+                // Image choices for the favicon / logo pickers.
+                $images = $this->databases->site($site->handle)->fetchAllAssociative(
+                    "SELECT id, original_name, alt FROM media
+                     WHERE kind = 'image' AND status = 'ready' AND deleted_at IS NULL
+                     ORDER BY id DESC LIMIT 200",
+                );
+            } catch (\Throwable) {
+                // Optional panel — never blank the screen.
+            }
+        }
+        if ($tab === 'seo') {
+            try {
+                $images = $this->databases->site($site->handle)->fetchAllAssociative(
+                    "SELECT id, original_name, alt FROM media
+                     WHERE kind = 'image' AND status = 'ready' AND deleted_at IS NULL
+                     ORDER BY id DESC LIMIT 200",
+                );
+            } catch (\Throwable) {
+                // Optional panel — never blank the screen.
+            }
+        }
+        if ($tab === 'shell') {
+            try {
+                $revisions = $this->databases->site($site->handle)->fetchAllAssociative(
+                    'SELECT rev_no, note, created_by, created_at FROM shell_revisions WHERE deleted_at IS NULL ORDER BY rev_no DESC LIMIT 10',
+                );
             } catch (\Throwable) {
                 // Optional panel — never blank the screen.
             }
         }
 
+        // Languages + translation status moved to the dedicated Translations
+        // screen (TranslationsScreenHandler).
+
+        $scripts = $tab === 'scripts' ? $this->scripts->list($site->handle) : [];
+
+        // The Suggested-redirects filter and sort ride in the URL exactly as
+        // ?tab= does, so a filtered view survives a reload, a bookmark, and
+        // the redirect back from a bulk action. An unknown sort falls back
+        // rather than erroring — same rule as an unknown tab.
+        $query = $request->getQueryParams();
+        $missingQ = $tab === 'redirects' ? trim((string) ($query['q'] ?? '')) : '';
+        $missingSort = (string) ($query['sort'] ?? 'hits');
+        if (!\in_array($missingSort, \Fastsite\Site\Service\RedirectService::MISSING_SORTS, true)) {
+            $missingSort = 'hits';
+        }
+
         return $this->dash->render($request, 'settings.html.twig', [
             'title' => $site->name . ' settings — fastsite',
             'site' => $site,
-            'translation_status' => $translationStatus,
-            'translation_failed' => array_sum(array_map(static fn (array $s): int => $s['failed'], $translationStatus)),
-            'translator_configured' => $this->ai->translatorConfiguredForSite($site),
-            'ai_credentials' => $this->aiCreds->listAll(),
-            'locale_add_codes' => \Fastsite\Shared\Locales::codes([$site->primaryLocale, ...$site->locales]),
-            'files' => $this->shell->listFiles($site),
+            'can_manage' => $this->dash->canManageSite($this->dash->user($request), $site),
+            'tab' => $tab,
+            'tabs' => self::TAB_LABELS,
+            'ai_credentials' => $tab === 'general' ? $this->aiCreds->listAll() : [],
+            'files' => $tab === 'shell' ? $this->shell->listFiles($site) : [],
             'edit_file' => $editFile,
             'edit_content' => $editContent,
             'components' => $components,
             'revisions' => $revisions,
             'images' => $images,
-            'scripts' => $this->scripts->list($site->handle),
-            'redirects' => $this->redirects->list($site->handle),
-            'missing' => $this->redirects->listMissing($site->handle),
-            'github_creds' => $this->githubCreds->listAll(),
+            'scripts' => $scripts,
+            // Which of them ship differently from how they were typed, because
+            // the build had to wrap loose JavaScript in <script> tags for it to
+            // run at all. Disclosed on the card rather than done silently.
+            'scripts_wrapped' => array_values(array_map(
+                static fn (\Fastsite\Site\Dto\SiteScript $s): int => $s->id,
+                array_filter($scripts, static fn (\Fastsite\Site\Dto\SiteScript $s): bool => \Fastsite\Site\Service\SiteScriptService::needsWrapping($s->code)),
+            )),
+            'redirects' => $tab === 'redirects' ? $this->redirects->list($site->handle) : [],
+            'missing' => $tab === 'redirects' ? $this->redirects->listMissing($site->handle, $missingQ, $missingSort) : [],
+            'missing_q' => $missingQ,
+            'missing_sort' => $missingSort,
+            // The true number of matching rows, so "showing 500 of 1,284" can
+            // be honest instead of the list silently stopping.
+            'missing_total' => $tab === 'redirects' ? $this->redirects->countMissing($site->handle, $missingQ) : 0,
+            // Keyed by status so the template can ask `error_pages[403]`
+            // directly instead of scanning a list per row.
+            'error_pages' => $tab === 'errors' ? $this->errorPages($site->handle) : [],
+            'error_codes' => \Fastsite\Content\Dto\Content::CODES,
+            'github_creds' => $tab === 'publishing' ? $this->githubCreds->listAll() : [],
             'global_token_configured' => $this->globalTokenConfigured,
+            'engine_shortpixel_configured' => $this->engineShortpixelConfigured,
             // git@ repos push over SSH: the token select is irrelevant there —
             // the per-site deploy key on the data volume is the mechanism.
             'deploy_key_exists' => is_file($this->databases->dataPath() . '/keys/' . $site->handle),
-            'user_teams' => $this->teams->listForUser((int) $this->dash->user($request)['id']),
+            'user_teams' => $tab === 'general' ? $this->teams->listForUser((int) $this->dash->user($request)['id']) : [],
+            'user_workspaces' => $tab === 'general' ? $this->workspaces->listForUser((int) $this->dash->user($request)['id']) : [],
+            // When an admin filed the site into a workspace the owner cannot
+            // access, the select is replaced by a locked note + hidden field
+            // so saving the form cannot silently detach the site.
+            'site_workspace_accessible' => $site->workspaceId === null
+                || $this->workspaces->canAccess((int) $this->dash->user($request)['id'], $site->workspaceId),
             // The Pages project name the auto-setup would create — lets the
             // Go-live card deep-link to that project's Domains screen.
             'cf_project' => CloudflarePagesService::projectName($site->handle),
-            'guide_rules' => $this->authoring->rules(),
+            'guide_rules' => $tab === 'general' ? $this->authoring->rules() : [],
         ]);
+    }
+
+    /**
+     * This site's error pages keyed by status.
+     *
+     * Read through the repository rather than ContentService because the tab
+     * only displays them — editing happens on the normal Content screen, which
+     * is the point of error pages being content rows at all.
+     *
+     * @return array<int, \Fastsite\Content\Dto\Content>
+     */
+    private function errorPages(string $handle): array
+    {
+        $out = [];
+        foreach ($this->content->listErrorPages($handle) as $row) {
+            if ($row->errorStatus !== null) {
+                $out[$row->errorStatus] = $row;
+            }
+        }
+
+        return $out;
     }
 }

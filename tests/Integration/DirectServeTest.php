@@ -8,10 +8,11 @@ use Fastsite\Serve\DirectServeGate;
 use Fastsite\Shared\Clock\SystemClock;
 use Fastsite\Shared\Database\Migrator;
 use Fastsite\Shared\Database\SiteDatabaseManager;
+use Fastsite\Shared\Http\BuildHeaders;
 use Fastsite\Site\Repository\DbalSiteRepository;
 use Fastsite\Site\Service\RedirectService;
 use Fastsite\Site\Service\SiteService;
-use Nyholm\Psr7\ServerRequest;
+use GuzzleHttp\Psr7\ServerRequest;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Log\NullLogger;
@@ -45,7 +46,7 @@ final class DirectServeTest extends TestCase
         $repo = new DbalSiteRepository($this->databases, $clock);
         $this->sites = new SiteService($repo, $this->databases, $migrator, $clock, new NullLogger(), $appRoot);
         $this->redirects = new RedirectService($this->databases, $clock);
-        $this->gate = new DirectServeGate($repo, $this->databases, $this->redirects, self::APP_URL);
+        $this->gate = new DirectServeGate($repo, $this->databases, $this->redirects, new BuildHeaders(), self::APP_URL);
 
         $this->sites->create('dsite', 'Direct Site', 'https://example.test');
         $this->sites->update('dsite', ['serve_mode' => 'direct']);
@@ -149,6 +150,152 @@ final class DirectServeTest extends TestCase
         self::assertNotNull($response);
         self::assertSame(301, $response->getStatusCode());
         self::assertSame('/blog/hello/', $response->getHeaderLine('Location'));
+    }
+
+    public function testWildcardRuleMatchesWithSplatAndKeepsTheQueryString(): void
+    {
+        $this->redirects->save('dsite', '/app/*', 'https://legacy.example/app/:splat', 307);
+
+        $response = $this->get('https://example.test/app/js/shopify.js?ver=42');
+        self::assertNotNull($response);
+        self::assertSame(307, $response->getStatusCode());
+        self::assertSame('https://legacy.example/app/js/shopify.js?ver=42', $response->getHeaderLine('Location'));
+
+        // The prefix itself (no remainder) matches with an empty splat.
+        $bare = $this->get('https://example.test/app');
+        self::assertNotNull($bare);
+        self::assertSame(307, $bare->getStatusCode());
+        self::assertSame('https://legacy.example/app/', $bare->getHeaderLine('Location'));
+    }
+
+    public function testExactRuleBeatsAWildcardRegardlessOfRowOrder(): void
+    {
+        // "/app/*" sorts before "/app/special" — the exact rule must still win.
+        $this->redirects->save('dsite', '/app/*', 'https://legacy.example/app/:splat', 307);
+        $this->redirects->save('dsite', '/app/special', '/blog/hello/', 301);
+
+        $response = $this->get('https://example.test/app/special');
+        self::assertNotNull($response);
+        self::assertSame(301, $response->getStatusCode());
+        self::assertSame('/blog/hello/', $response->getHeaderLine('Location'));
+    }
+
+    public function testWildcardGoneRetiresAWholeSubtree(): void
+    {
+        $this->redirects->save('dsite', '/old-shop/*', '', RedirectService::GONE);
+
+        $response = $this->get('https://example.test/old-shop/product/42');
+        self::assertNotNull($response);
+        self::assertSame(410, $response->getStatusCode());
+        self::assertSame('', $response->getHeaderLine('Location'));
+    }
+
+    public function testPostToARedirectRuleGetsTheRedirectNotA405(): void
+    {
+        $this->redirects->save('dsite', '/app/*', 'https://legacy.example/app/:splat', 307);
+
+        $response = $this->get('https://example.test/app/api/v1/consent', [], 'POST');
+        self::assertNotNull($response);
+        self::assertSame(307, $response->getStatusCode(), '307 preserves the POST method and body');
+        self::assertSame('https://legacy.example/app/api/v1/consent', $response->getHeaderLine('Location'));
+
+        // A POST with no matching rule keeps the 405.
+        $miss = $this->get('https://example.test/app-less', [], 'POST');
+        self::assertNotNull($miss);
+        self::assertSame(405, $miss->getStatusCode());
+    }
+
+    public function testGoneRuleReturnsARealFourTenAndIsNotTrackedAsAMiss(): void
+    {
+        $this->redirects->save('dsite', '/retired', '', RedirectService::GONE);
+
+        $response = $this->get('https://example.test/retired');
+        self::assertNotNull($response);
+        self::assertSame(410, $response->getStatusCode());
+        self::assertSame('', $response->getHeaderLine('Location'), 'Gone has no target');
+        self::assertStringContainsString('Custom not found', (string) $response->getBody());
+        self::assertSame('nosniff', $response->getHeaderLine('X-Content-Type-Options'), 'the build _headers still apply');
+
+        // Retiring a URL is deliberate — it must not come back as a suggested
+        // redirect on the dashboard.
+        self::assertNotContains('/retired', array_column($this->redirects->listMissing('dsite'), 'path'));
+    }
+
+    /**
+     * A site with a 410 page serves ITS page, not the 404's bytes.
+     *
+     * Before error pages existed, every 410 served the 404 file verbatim —
+     * `<h1>404</h1>` and all — under a 410 status, so the page told the visitor
+     * the opposite of what the status line said.
+     */
+    public function testGoneServesThe410PageWhenTheBuildHasOne(): void
+    {
+        file_put_contents(
+            $this->databases->sitePath('dsite') . '/build/410.html',
+            '<!doctype html><title>410</title>This page is gone for good',
+        );
+        $this->redirects->save('dsite', '/retired', '', RedirectService::GONE);
+
+        $response = $this->get('https://example.test/retired');
+        self::assertNotNull($response);
+        self::assertSame(410, $response->getStatusCode());
+        self::assertStringContainsString('gone for good', (string) $response->getBody());
+        self::assertStringNotContainsString('Custom not found', (string) $response->getBody());
+    }
+
+    /**
+     * A miss under a locale prefix serves THAT locale's 404.
+     *
+     * The build has emitted `dk/404.html` per locale since multilingual sites
+     * existed, but `notFound()` only ever read the build root — so every miss
+     * on a Danish page answered in English.
+     */
+    public function testAMissUnderALocalePrefixServesThatLocales404(): void
+    {
+        $build = $this->databases->sitePath('dsite') . '/build';
+        mkdir($build . '/dk', 0770, true);
+        file_put_contents($build . '/dk/404.html', '<!doctype html><title>404</title>Siden findes ikke');
+
+        $response = $this->get('https://example.test/dk/noget-der-ikke-findes');
+        self::assertNotNull($response);
+        self::assertSame(404, $response->getStatusCode());
+        self::assertStringContainsString('Siden findes ikke', (string) $response->getBody());
+    }
+
+    /** No locale page for that prefix: the root 404 is still better than nothing. */
+    public function testAMissUnderALocaleWithNo404FallsBackToTheRootPage(): void
+    {
+        $response = $this->get('https://example.test/de/missing');
+        self::assertNotNull($response);
+        self::assertSame(404, $response->getStatusCode());
+        self::assertStringContainsString('Custom not found', (string) $response->getBody());
+    }
+
+    public function testGoneRuleSendsNoBodyOnHead(): void
+    {
+        $this->redirects->save('dsite', '/retired', '', RedirectService::GONE);
+
+        $response = $this->get('https://example.test/retired', [], 'HEAD');
+        self::assertNotNull($response);
+        self::assertSame(410, $response->getStatusCode());
+        self::assertSame('', (string) $response->getBody());
+    }
+
+    public function testWwwCanonicalHostReversesTheHostRedirect(): void
+    {
+        $this->sites->update('dsite', ['canonical_host' => 'www']);
+
+        // The bare domain now 301s to www…
+        $apex = $this->get('https://example.test/blog/hello/?utm=x');
+        self::assertNotNull($apex);
+        self::assertSame(301, $apex->getStatusCode());
+        self::assertSame('https://www.example.test/blog/hello/?utm=x', $apex->getHeaderLine('Location'));
+
+        // …and www serves the site instead of bouncing back (no 301 loop).
+        $www = $this->get('https://www.example.test/blog/hello/');
+        self::assertNotNull($www);
+        self::assertSame(200, $www->getStatusCode());
+        self::assertStringContainsString('Post body', (string) $www->getBody());
     }
 
     public function testMissServesSite404AndRecordsThePath(): void

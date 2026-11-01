@@ -102,15 +102,29 @@ final class ContentSanitizerTest extends TestCase
         // data-* attributes are inert and site JS (trusted file embeds)
         // hydrates against them — they must never be stripped.
         $result = $this->sanitizer->sanitize(
-            '<div data-id="10828" class="rexultz productcard"></div>'
+            '<div data-id="10828" class="vendor productcard"></div>'
             . '<span data-tooltip-position="top" data-open>x</span>'
         );
 
         self::assertStringContainsString('data-id="10828"', $result->html);
-        self::assertStringContainsString('class="rexultz productcard"', $result->html);
+        self::assertStringContainsString('class="vendor productcard"', $result->html);
         self::assertStringContainsString('data-tooltip-position="top"', $result->html);
         self::assertStringContainsString('data-open', $result->html);
         self::assertSame([], $result->warnings);
+    }
+
+    public function testKeepsAuthoredCtaTrackingAttributes(): void
+    {
+        // The GTM CTA contract: an author's explicit data-cta* attributes on a
+        // body link must reach the build intact — they are what the
+        // CtaAnnotator's explicit-wins rule protects.
+        $result = $this->sanitizer->sanitize(
+            '<p><a href="/demo" data-cta="book_demo" data-cta-text="Book Demo" data-cta-location="body_cta">Book Demo</a></p>'
+        );
+
+        self::assertStringContainsString('data-cta="book_demo"', $result->html);
+        self::assertStringContainsString('data-cta-text="Book Demo"', $result->html);
+        self::assertStringContainsString('data-cta-location="body_cta"', $result->html);
     }
 
     public function testKeepsDataAttributesInMinifiedAndUnusualMarkup(): void
@@ -134,6 +148,37 @@ final class ContentSanitizerTest extends TestCase
         self::assertStringContainsString('data-id="1"', $result->html);
         self::assertStringNotContainsString('onclick', $result->html);
         self::assertStringNotContainsString('<script', $result->html);
+    }
+
+    public function testKeepsTargetBlankAndAddsNoopener(): void
+    {
+        // The dashboard HTML editor round-trips body_html through the
+        // sanitizer on every save — target="_blank" must survive, and a
+        // _blank link without rel gets noopener added (reverse-tabnabbing).
+        $result = $this->sanitizer->sanitize('<p><a href="https://example.com/" target="_blank">x</a></p>');
+
+        self::assertStringContainsString('target="_blank"', $result->html);
+        self::assertStringContainsString('rel="noopener"', $result->html);
+        self::assertSame([], $result->warnings);
+    }
+
+    public function testMergesNoopenerIntoExistingRel(): void
+    {
+        $result = $this->sanitizer->sanitize('<a href="/x/" rel="nofollow" target="_blank">a</a>'
+            . '<a href="/y/" rel="noopener nofollow" target="_blank">b</a>');
+
+        self::assertStringContainsString('rel="nofollow noopener"', $result->html);
+        // Already-noopener rel is left exactly as written — never duplicated.
+        self::assertStringContainsString('rel="noopener nofollow"', $result->html);
+        self::assertSame(0, substr_count($result->html, 'noopener noopener'));
+    }
+
+    public function testTargetWithoutBlankNeedsNoRel(): void
+    {
+        $result = $this->sanitizer->sanitize('<a href="/x/" target="_self">x</a>');
+
+        self::assertStringContainsString('target="_self"', $result->html);
+        self::assertStringNotContainsString('rel=', $result->html);
     }
 
     public function testKeepsFileIdEmbed(): void

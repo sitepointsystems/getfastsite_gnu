@@ -1,0 +1,80 @@
+    <div class="card">
+      <h2 style="margin-top:0">Error pages</h2>
+      <p class="sub" style="margin-top:0">
+        Each of these is a normal page you edit on the <a href="/sites/{{ site.handle }}/content">Content</a> screen — so it
+        takes components, media, a form, and gets auto-translated into every language the site has. Error pages are always
+        <span class="mono">noindex</span> and never appear in the sitemap, <span class="mono">llms.txt</span> or any on-site list.
+      </p>
+
+      {# The honest part. The engine writes a file for every code below, but
+         whether anything ever SERVES it is a property of the serving mode, not
+         of the page. Saying so here is the difference between a feature and a
+         page that looks configured and is never once seen. Same wording shape
+         the Redirects tab uses for its 410 caveat. #}
+      {% if site.serveMode == 'ftp' %}
+        <p class="sub"><strong>This site publishes to your own web host.</strong> Apache reads
+        <span class="mono">.htaccess</span>, so <em>every</em> code below is wired up with a real
+        <span class="mono">ErrorDocument</span> and will actually be served.</p>
+      {% elseif site.serveMode == 'direct' %}
+        <p class="sub"><strong>This engine serves the site.</strong> It produces <strong>404</strong> and <strong>410</strong>
+        itself, so those two are served for real. The others are built and published, but nothing on this path ever
+        returns them — they are there for the day the site moves to its own host.</p>
+      {% else %}
+        <p class="sub"><strong>This site publishes to a CDN.</strong> Cloudflare Pages picks up
+        <span class="mono">404.html</span> by its own convention and has no mechanism for the rest, so
+        <strong>only the 404 is served</strong>. The others are still built and published — useful if the site later moves
+        to its own host, and harmless meanwhile — but they will not be returned here. A 410 rule on the
+        <a href="/sites/{{ site.handle }}/settings?tab=redirects">Redirects</a> tab falls through to your 404 page.</p>
+      {% endif %}
+
+      <table style="margin-top:1rem">
+        <tr><th>Status</th><th>Page</th><th>Served here</th><th></th></tr>
+        {% for code in error_codes %}
+          {% set row = error_pages[code] ?? null %}
+          {% set served = site.serveMode == 'ftp' or (site.serveMode == 'direct' and (code == 404 or code == 410)) or code == 404 %}
+          <tr>
+            <td class="mono">{{ code }}</td>
+            <td>
+              {% if row %}
+                <a href="/sites/{{ site.handle }}/content?edit={{ row.id }}">{{ row.title }}</a>
+                <span class="mut mono" style="font-size:.8rem">/{{ code }}.html</span>
+              {% elseif code == 404 %}
+                <span class="mut">Using the shell's built-in 404 page</span>
+              {% else %}
+                <span class="mut">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if served %}
+                <span class="badge ok">yes</span>
+              {% else %}
+                <span class="badge warn" title="Built and published, but this serving mode never returns it">built only</span>
+              {% endif %}
+            </td>
+            <td class="rowacts">
+              {% if row %}
+                <form method="post" action="/sites/{{ site.handle }}/settings/action" class="inline"
+                      data-confirm="Turn the {{ code }} page back into an ordinary page? It keeps its content and starts rendering at its own URL instead of /{{ code }}.html.{% if code == 404 %} The site falls back to the shell's built-in 404.{% endif %}">
+                  <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="tab" value="{{ tab }}">
+                  <input type="hidden" name="action" value="error-page-detach">
+                  <input type="hidden" name="id" value="{{ row.id }}">
+                  <button type="submit" class="linklike">detach</button>
+                </form>
+              {% else %}
+                <form method="post" action="/sites/{{ site.handle }}/settings/action" class="inline">
+                  <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="tab" value="{{ tab }}">
+                  <input type="hidden" name="action" value="error-page-create">
+                  <input type="hidden" name="status" value="{{ code }}">
+                  <button type="submit" class="button small ghost">Create</button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </table>
+
+      <p class="sub" style="margin-top:1rem">
+        A shell can style one code specially with a <span class="mono">{code}.html.twig</span> template, handle the rest with
+        <span class="mono">error.html.twig</span>, or ship neither and have every code reuse its 404.
+      </p>
+    </div>

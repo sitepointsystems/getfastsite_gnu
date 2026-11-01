@@ -11,6 +11,31 @@
 </div>
 {% endif %}
 
+{% if my_invites %}
+<div class="card">
+  <h2 style="margin-top:0">Invitations for you</h2>
+  <table>
+    <tr><th>Team</th><th>Invited by</th><th>Invite link</th><th>Expires</th><th></th></tr>
+    {% for i in my_invites %}
+    <tr>
+      <td>{{ i.team_name }}</td>
+      <td class="mut">{{ i.invited_by_email ?: '—' }}</td>
+      <td><a class="mono" href="/invite/{{ i.token }}" style="font-size:.85rem">/invite/{{ i.token|slice(0, 12) }}…</a></td>
+      <td class="mut">{{ i.expires_at|slice(0, 10) }}</td>
+      <td>
+        <form method="post" action="/teams/action" class="inline">
+          <input type="hidden" name="_csrf" value="{{ csrf }}">
+          <input type="hidden" name="action" value="invite-accept">
+          <input type="hidden" name="invite_id" value="{{ i.id }}">
+          <button class="button small" type="submit">Accept</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
 <div class="grid2">
   <div>
     <div class="card">

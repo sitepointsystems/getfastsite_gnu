@@ -1,0 +1,380 @@
+{% extends 'dash-layout.html.twig' %}
+
+{% block body %}
+<h1>{{ site.name }}</h1>
+<p class="sub">Translations — languages, auto-translation status, retries.</p>
+{% include 'site-nav.html.twig' %}
+
+<div class="card">
+  <h2 style="margin-top:0">Languages</h2>
+  <div style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center">
+    <span class="badge ok" style="display:inline-flex;align-items:center;gap:.4rem">
+      {% if locale_flag_url(site.primaryLocale) %}<img src="{{ locale_flag_url(site.primaryLocale) }}" width="20" height="15" alt="" style="border-radius:2px;object-fit:cover" onerror="this.style.display='none'">{% endif %}
+      {{ locale_name(site.primaryLocale) }} <span class="mut" style="font-weight:400">primary</span>
+    </span>
+    {% for l in site.locales %}
+      <span class="badge mut" style="display:inline-flex;align-items:center;gap:.4rem;white-space:nowrap">
+        {% if locale_flag_url(l) %}<img src="{{ locale_flag_url(l) }}" width="20" height="15" alt="" style="border-radius:2px;object-fit:cover" onerror="this.style.display='none'">{% endif %}
+        {{ locale_name(l) }}
+        <form method="post" action="/sites/{{ site.handle }}/translations/action" class="inline" onsubmit="return confirm('Remove {{ locale_name(l) }}? All its translations and the /{{ l }}/ pages are deleted, then the site republishes.')">
+          <input type="hidden" name="_csrf" value="{{ csrf }}">
+          <input type="hidden" name="action" value="remove-language">
+          <input type="hidden" name="locale" value="{{ l }}">
+          <button type="submit" title="Remove {{ locale_name(l) }}" style="display:inline-flex;background:none;border:0;color:var(--danger);cursor:pointer;padding:0;margin:0;font:inherit;line-height:1">✕</button>
+        </form>
+      </span>
+    {% endfor %}
+  </div>
+
+  <form method="post" action="/sites/{{ site.handle }}/translations/action" class="row" style="margin-top:1rem" onsubmit="if(!this.locale.value){alert('Choose a language first.');return false}">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="action" value="add-language">
+    <div style="min-width:15rem"><label>Add language</label>
+      <div class="mediadrop" data-mediadrop>
+        <input type="hidden" name="locale" value="">
+        <button type="button" class="mediadrop-trigger"><span class="mediadrop-current"></span><span class="mediadrop-caret">▾</span></button>
+        <div class="mediadrop-panel" hidden>
+          <button type="button" class="mediadrop-opt" data-value="" data-thumb=""><span class="opt">🌐</span>— choose a language —</button>
+          {% for code in locale_add_codes %}
+          <button type="button" class="mediadrop-opt" data-value="{{ code }}" data-thumb="{{ locale_flag_url(code) }}">
+            {% if locale_flag_url(code) %}<img class="opt" src="{{ locale_flag_url(code) }}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">{% else %}<span class="opt">🌐</span>{% endif %}{{ locale_name(code) }}
+          </button>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    <div class="tight" style="align-self:end"><button class="button" type="submit">Add + translate</button></div>
+  </form>
+</div>
+
+{% if not translator_configured %}
+<div class="card">
+  <h2 style="margin-top:0">Auto-translation</h2>
+  <p class="flash err" style="font-size:.85rem">Auto-translation is <strong>disabled</strong>: no translator is configured for this site. Add an <strong>OpenRouter key</strong> on your <a href="/account">Account</a> and select it as this site's <em>AI key</em> on <a href="/sites/{{ site.handle }}/settings">Settings</a> (or configure the built-in translator). Added locales stay untranslated until then.</p>
+</div>
+{% elseif site.locales|length %}
+<div class="card">
+  <h2 style="margin-top:0">Auto-translation</h2>
+  <p class="mut" style="font-size:.83rem;margin:.2rem 0 .6rem">Auto-translation is active. Translation runs on the queue and republishes automatically; status per locale:</p>
+
+  {% if translator_info.problem %}
+  <p class="flash err" style="font-size:.83rem;margin:.2rem 0 .8rem">
+    <strong>The AI key you selected is not being used.</strong> {{ translator_info.problem }}
+  </p>
+  {% endif %}
+  {% if translator_info.provider %}
+  <p style="font-size:.83rem;margin:.2rem 0 .8rem">
+    <span class="badge mut">Using {{ translator_info.provider }}</span>
+    <span class="mut">
+      model <span class="mono">{{ translator_info.model }}</span> · paid by {{ translator_info.paid_by }}.
+      {%- if translator_info.provider == 'OpenRouter' %}
+        Change the translation model on <a href="/account">Account</a>.
+      {%- else %}
+        To translate with your own key and model instead, select an <em>AI key</em> on
+        <a href="/sites/{{ site.handle }}/settings">Settings</a>.
+      {%- endif %}
+    </span>
+  </p>
+  {% endif %}
+
+  {% if translation_job.stalled %}
+  <p style="font-size:.83rem;margin:.2rem 0 .6rem">
+    <span class="badge err">&#9888; {{ translation_job.stalled }} stalled chunk{{ translation_job.stalled > 1 ? 's' }}</span>
+    <span class="mut">a worker was interrupted mid-run (deploy or restart) and left these behind — they are not translating anything. The Retry button below clears them and starts fresh.</span>
+  </p>
+  {% endif %}
+  {% if translation_job.running or translation_job.pending %}
+  <p style="font-size:.83rem;margin:.2rem 0 .6rem">
+    {% if translation_job.running %}
+      <span class="badge ok">&#10227; Translating now</span>
+      <span class="mut">a chunk is being translated{% if translation_job.pending %} · {{ translation_job.pending }} more queued{% endif %} — the counts below drop as items finish; refresh to follow progress.</span>
+    {% elseif translation_job.retry_at %}
+      <span class="badge warn">&#10227; Translation parked</span>
+      <span class="mut">the last run hit errors and automatically retries at {{ translation_job.retry_at }} — the Retry button below runs it immediately.</span>
+    {% else %}
+      <span class="badge warn">&#10227; Translation queued</span>
+      <span class="mut">a chunk is waiting for the worker and starts as soon as the current job finishes.</span>
+    {% endif %}
+  </p>
+  {% elseif translation_job.dead %}
+  <p style="font-size:.83rem;margin:.2rem 0 .6rem">
+    <span class="badge err">&#9888; Translation stopped</span>
+    <span class="mut">the last translation job gave up after repeated failures. Fix the cause (AI key, quota, gateway), then hit Retry below to start over.</span>
+  </p>
+  {% endif %}
+  {% if translation_job.error %}
+  <p class="mut" style="font-size:.78rem;color:var(--danger);margin:.2rem 0 .6rem">last job error: {{ translation_job.error }}</p>
+  {% endif %}
+
+  <table>
+    <tr><th>Locale</th><th>Live</th><th>In queue</th><th>Failed</th></tr>
+    {% for loc, st in translation_status %}
+    <tr>
+      <td><span class="badge mut">{{ loc }}</span></td>
+      <td>{{ st.live }}{% if st.manual %} <span class="mut">(+{{ st.manual }} manual)</span>{% endif %} / {{ st.total }}</td>
+      <td>
+        {% if st.in_queue %}<span class="badge warn">{{ st.in_queue }}</span>{% else %}0{% endif %}
+        {%- if st.in_queue %}
+        <span class="mut" style="font-size:.75rem">
+          {%- set parts = [] %}
+          {%- if st.stale %}{% set parts = parts|merge(['%d needs refresh'|format(st.stale)]) %}{% endif %}
+          {%- if st.missing %}{% set parts = parts|merge(['%d not translated yet'|format(st.missing)]) %}{% endif %}
+          {%- if st.queued %}{% set parts = parts|merge(['%d reset'|format(st.queued)]) %}{% endif %}
+          {{ parts|join(' · ') }}
+        </span>
+        {%- endif %}
+      </td>
+      <td>{% if st.failed %}<span class="badge err">{{ st.failed }}</span>{% else %}0{% endif %}</td>
+    </tr>
+    {% if st.error %}
+    <tr><td></td><td colspan="3" class="mut" style="font-size:.78rem;color:var(--danger)">last error: {{ st.error }}</td></tr>
+    {% endif %}
+    {% endfor %}
+  </table>
+  <p class="mut" style="font-size:.8rem;margin:.5rem 0 0">
+    <strong>Live</strong> = pages currently published in that language. <strong>In queue</strong> = everything the next
+    translate run will pick up, including pages whose source changed (those keep their old translation online until the
+    new one is ready, which is why they stay <em>Live</em> too). <strong>Failed</strong> = the provider rejected that
+    item — check the log below for its exact answer.
+  </p>
+
+  {% if translation_pending_work or translation_job.stalled %}
+  <form method="post" action="/sites/{{ site.handle }}/translations/action" class="inline" style="margin-top:.6rem"
+        data-busy="Restarting translation… failed items are reset and a fresh job starts immediately.">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="action" value="retry-translations">
+    <button class="button small" type="submit">&#8635;
+      {%- if translation_failed %} Retry {{ translation_failed }} failed translation{{ translation_failed > 1 ? 's' }}
+      {%- elseif translation_pending_work %} Restart translation ({{ translation_pending_work }} item{{ translation_pending_work > 1 ? 's' }} left)
+      {%- else %} Clear stalled jobs &amp; restart
+      {%- endif %}</button>
+  </form>
+  <span class="mut" style="font-size:.8rem;margin-left:.5rem">Resets failed items, clears stuck translate jobs, and starts a fresh run over everything failed/stale/queued/missing, then republishes.</span>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">Translation speed</h2>
+  <p class="mut" style="font-size:.83rem;margin:.2rem 0 .8rem">
+    Every page in every language is a separate AI call. <strong>At a time</strong> is how many of those run
+    concurrently — the single biggest lever on how long a full translation takes. Raise it until your AI
+    provider starts rate-limiting (the run then backs off on its own and parks; it never loses work).
+    <strong>Per chunk</strong> is how many page-language pairs one background job handles before handing the
+    worker to the next site — larger finishes this site sooner, smaller shares the worker more evenly.
+  </p>
+  <form method="post" action="/sites/{{ site.handle }}/translations/action" class="row">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="action" value="throughput">
+    <div style="max-width:11rem">
+      <label for="tc">At a time</label>
+      <input id="tc" type="number" name="translate_concurrency" min="1" max="16" value="{{ site.translateConcurrency }}">
+      <span class="mut" style="font-size:.75rem">1–16 · 1 = one call at a time</span>
+    </div>
+    <div style="max-width:11rem">
+      <label for="tcs">Per chunk</label>
+      <input id="tcs" type="number" name="translate_chunk_size" min="1" max="200" value="{{ site.translateChunkSize }}">
+      <span class="mut" style="font-size:.75rem">1–200 page-language pairs</span>
+    </div>
+    <div class="tight" style="align-self:start;margin-top:1.55rem"><button class="button" type="submit">Save</button></div>
+  </form>
+
+  <hr style="border:0;border-top:1px solid var(--border);margin:1.2rem 0 1rem">
+
+  <h3 style="margin:0 0 .3rem;font-size:.95rem">Re-translate everything</h3>
+  <p class="mut" style="font-size:.83rem;margin:.2rem 0 .6rem">
+    Discards every automatic translation on this site and regenerates it from the current source. Use this when
+    the translations are <em>wrong</em> rather than <em>out of date</em> — a translation that is already
+    up to date is never re-run on its own, so nothing else will fix it. Manual translations are kept.
+    To redo a single page instead, use <strong>re-translate</strong> on its row in
+    <a href="/sites/{{ site.handle }}/content">Content</a>.
+  </p>
+  <form method="post" action="/sites/{{ site.handle }}/translations/action" class="inline"
+        data-confirm="Re-translate every page on this site into all {{ site.locales|length }} language{{ site.locales|length > 1 ? 's' }}? This discards the current automatic translations and runs the whole site through the AI again — it costs provider credits and can take a long time. Manual translations are kept."
+        data-confirm-title="Re-translate the whole site" data-confirm-ok="Re-translate everything" data-confirm-danger
+        data-busy="Queueing a full re-translation…">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="action" value="retranslate-all">
+    <button class="button small" type="submit">&#8635; Re-translate all content</button>
+  </form>
+</div>
+
+<div class="card">
+  <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap">
+    <h2 style="margin:0">Translation log</h2>
+    <span id="tl-state" class="badge mut">idle</span>
+    <label style="display:inline-flex;align-items:center;gap:.35rem;font-size:.8rem;margin:0;cursor:pointer">
+      <input type="checkbox" id="tl-live" checked style="width:auto;margin:0"> live
+    </label>
+    <button class="button small" type="button" id="tl-refresh">Refresh</button>
+    <form method="post" action="/sites/{{ site.handle }}/translations/action" class="inline" style="margin-left:auto">
+      <input type="hidden" name="_csrf" value="{{ csrf }}">
+      <input type="hidden" name="action" value="clear-log">
+      <button class="linkbtn" type="submit">clear log</button>
+    </form>
+  </div>
+  <p class="mut" style="font-size:.83rem;margin:.4rem 0 .7rem">
+    Every call to the AI as it happens — what was sent, exactly what came back, and the provider's own error when
+    one fails. Click a row to see the full response. This is what to read when translation keeps retrying.
+  </p>
+  <p id="tl-joberr" class="mut" style="font-size:.78rem;color:var(--danger);margin:.2rem 0 .6rem;display:none"></p>
+  <div style="overflow-x:auto">
+    <table style="width:100%">
+      <tr><th style="width:5.5rem">Time</th><th style="width:4rem">Lang</th><th>Page</th><th style="width:7rem">Field</th><th style="width:5rem">Result</th><th style="width:6rem">Took</th></tr>
+      <tbody id="tl-rows">
+        <tr id="tl-empty"><td colspan="6" class="mut">Nothing logged yet. Start a translation and rows appear here.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(function(){
+  var rows = document.getElementById('tl-rows');
+  if (!rows) return;
+  var state = document.getElementById('tl-state');
+  var jobErr = document.getElementById('tl-joberr');
+  var live = document.getElementById('tl-live');
+  var url = '/sites/{{ site.handle }}/translations/log';
+  var after = 0, timer = null, busy = false;
+
+  function esc(s){ var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+
+  function badge(status){
+    var cls = status === 'ok' ? 'ok' : (status === 'rate_limited' ? 'warn' : 'err');
+    var label = status === 'rate_limited' ? 'limited' : status;
+    return '<span class="badge ' + cls + '">' + esc(label) + '</span>';
+  }
+
+  function addRow(r){
+    var empty = document.getElementById('tl-empty');
+    if (empty) empty.remove();
+
+    var tr = document.createElement('tr');
+    tr.style.cursor = 'pointer';
+    tr.innerHTML =
+      '<td class="mut mono">' + esc(r.at) + '</td>' +
+      '<td><span class="badge mut">' + esc(r.locale) + '</span></td>' +
+      '<td>' + esc(r.title || (r.content_id ? '#' + r.content_id : '—')) + '</td>' +
+      '<td class="mono">' + esc(r.field) + '</td>' +
+      '<td>' + badge(r.status) + '</td>' +
+      '<td class="mut">' + (r.duration_ms ? esc(r.duration_ms) + ' ms' + (r.batched ? ' <span class="mut">(batch)</span>' : '') : '—') + '</td>';
+
+    // Built as DOM, not as an HTML string: the payload here is raw model
+    // output and raw provider errors, so it must never be parsed as markup.
+    var detail = document.createElement("tr");
+    detail.style.display = "none";
+    var cell = document.createElement("td");
+    cell.colSpan = 6;
+    var pre = document.createElement("pre");
+    pre.style.cssText = "white-space:pre-wrap;word-break:break-word;font-size:.75rem;background:var(--bg-2);" +
+      "border:1px solid var(--border);border-radius:8px;padding:.6rem;margin:.2rem 0;max-height:22rem;overflow:auto";
+
+    function section(label, text, danger){
+      var h = document.createElement("strong");
+      h.textContent = label;
+      if (danger) h.style.color = "var(--danger)";
+      pre.appendChild(h);
+      pre.appendChild(document.createTextNode("\n" + (text || "\u2014") + "\n\n"));
+    }
+    if (r.error) section("Error", r.error, true);
+    section("Sent (" + r.request_chars + " chars, format " + r.format + ")", r.request);
+    section("AI returned (" + r.response_chars + " chars)", r.response);
+
+    cell.appendChild(pre);
+    detail.appendChild(cell);
+
+    tr.addEventListener('click', function(){
+      detail.style.display = detail.style.display === 'none' ? '' : 'none';
+    });
+
+    rows.insertBefore(detail, rows.firstChild);
+    rows.insertBefore(tr, rows.firstChild);
+
+    while (rows.children.length > 200) rows.removeChild(rows.lastChild);
+  }
+
+  function paintJob(job){
+    if (!job) return;
+    var s = job.status || '';
+    var label = s === 'running' ? 'translating' : (s === 'pending' ? (job.retry_at ? 'parked until ' + job.retry_at : 'queued') : s);
+    state.textContent = label || 'idle';
+    state.className = 'badge ' + (s === 'running' ? 'ok' : (s === 'dead' || s === 'failed' ? 'err' : 'mut'));
+    if (job.error) {
+      jobErr.textContent = 'last job error (attempt ' + job.attempts + '): ' + job.error;
+      jobErr.style.display = '';
+    } else {
+      jobErr.style.display = 'none';
+    }
+  }
+
+  function poll(){
+    if (busy) return;
+    busy = true;
+    fetch(url + '?after=' + after, {headers: {'Accept': 'application/json'}, credentials: 'same-origin'})
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(j){
+        if (!j || !j.data) return;
+        var list = j.data.rows || [];
+        // Server sends newest-first; insert oldest-first so the newest ends on
+        // top. The id guard is the client's own: a cached or replayed response
+        // must never be able to duplicate the tail.
+        for (var i = list.length - 1; i >= 0; i--) {
+          if (list[i].id <= after) continue;
+          addRow(list[i]);
+          after = list[i].id;
+        }
+        paintJob(j.data.job);
+      })
+      .catch(function(){ /* a dropped poll is not worth an error banner */ })
+      .then(function(){ busy = false; });
+  }
+
+  function schedule(){
+    if (timer) clearInterval(timer);
+    if (live.checked) timer = setInterval(poll, 2000);
+  }
+
+  document.getElementById('tl-refresh').addEventListener('click', poll);
+  live.addEventListener('change', schedule);
+  poll();
+  schedule();
+})();
+</script>
+{% endif %}
+
+<style>
+  .mediadrop{position:relative}
+  .mediadrop .opt{width:1.9rem;height:1.9rem;flex:0 0 auto;border-radius:5px;border:1px solid var(--border);background:var(--surface);object-fit:cover;display:inline-flex;align-items:center;justify-content:center;color:var(--muted);font-size:.85rem}
+  .mediadrop-trigger{width:100%;display:flex;align-items:center;gap:.55rem;background:var(--bg-2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:.4rem .6rem;font:inherit;cursor:pointer;text-align:left}
+  .mediadrop-trigger:hover{border-color:var(--accent)}
+  .mediadrop-current{display:flex;align-items:center;gap:.55rem;flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:.85rem}
+  .mediadrop-caret{color:var(--muted);flex:0 0 auto}
+  .mediadrop-panel{position:absolute;z-index:20;top:calc(100% + .3rem);left:0;right:0;max-height:16rem;overflow-y:auto;background:var(--surface);border:1px solid var(--border-strong,var(--border));border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.4);padding:.3rem}
+  .mediadrop-opt{width:100%;display:flex;align-items:center;gap:.55rem;background:none;border:0;color:var(--text-2);padding:.35rem .45rem;border-radius:6px;font:inherit;font-size:.85rem;cursor:pointer;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mediadrop-opt:hover{background:var(--bg-2);color:var(--text)}
+</style>
+<script>
+(function(){
+  document.querySelectorAll('[data-mediadrop]').forEach(function(root){
+    if(root.dataset.mdInit) return; root.dataset.mdInit='1';
+    var input = root.querySelector('input[type=hidden][name=locale]');
+    var trigger = root.querySelector('.mediadrop-trigger');
+    var current = root.querySelector('.mediadrop-current');
+    var panel = root.querySelector('.mediadrop-panel');
+    var opts = Array.prototype.slice.call(root.querySelectorAll('.mediadrop-opt'));
+    function paint(opt){
+      current.innerHTML = '';
+      var thumb = opt.getAttribute('data-thumb');
+      if(thumb){ var im = document.createElement('img'); im.className='opt'; im.src=thumb; im.alt=''; im.onerror=function(){this.style.visibility='hidden'}; current.appendChild(im); }
+      else { var sp = document.createElement('span'); sp.className='opt'; sp.textContent='🌐'; current.appendChild(sp); }
+      current.appendChild(document.createTextNode(' ' + opt.textContent.trim()));
+    }
+    function selectByValue(v){ var m = opts.filter(function(o){return o.getAttribute('data-value')===String(v);}); paint(m[0] || opts[0]); }
+    selectByValue(input.value);
+    trigger.addEventListener('click', function(e){ e.preventDefault(); panel.hidden = !panel.hidden; });
+    opts.forEach(function(o){ o.addEventListener('click', function(e){ e.preventDefault(); input.value = o.getAttribute('data-value'); paint(o); panel.hidden = true; }); });
+    document.addEventListener('click', function(e){ if(!root.contains(e.target)) panel.hidden = true; });
+  });
+})();
+</script>
+{% endblock %}

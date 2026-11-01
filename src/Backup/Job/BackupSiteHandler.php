@@ -38,7 +38,7 @@ final class BackupSiteHandler implements JobHandler
         $source = (string) ($job->payload['trigger'] ?? 'schedule');
 
         $this->lock->withLock($handle, function () use ($site, $kind, $source, $context): void {
-            $context->heartbeat();
+            $context->progress('Backing up ' . $kind . '…');
             match ($kind) {
                 'db' => $this->backups->backupSiteDb($site, $source),
                 'media' => $this->backups->backupSiteMedia($site, $source),

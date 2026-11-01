@@ -19,6 +19,11 @@ final readonly class Component
         public string $bundleHash,
         public string $status,
         public array $warnings,
+        // Ship the rendered output as authored (scripts and all), wrapped in
+        // the data-fs-embed trusted-region marker instead of being stripped.
+        public bool $verbatim = false,
+        public ?string $error = null,
+        public string $variablesSchema = '{}',
     ) {
     }
 
@@ -40,6 +45,9 @@ final readonly class Component
             bundleHash: (string) $row['bundle_hash'],
             status: (string) $row['status'],
             warnings: $warnings,
+            verbatim: (bool) ($row['verbatim'] ?? 0),
+            error: ($row['error'] ?? null) !== null && (string) $row['error'] !== '' ? (string) $row['error'] : null,
+            variablesSchema: (string) ($row['variables_schema'] ?? '{}'),
         );
     }
 }

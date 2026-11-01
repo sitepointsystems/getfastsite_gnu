@@ -42,6 +42,11 @@ final class TeamsActionHandler implements RequestHandlerInterface
                     // The link is shown once, straight from this response.
                     return $this->dash->redirect('/teams?team=' . $teamId . '&invite_token=' . $token, 'Invite created — share the link below.');
 
+                case 'invite-accept':
+                    $team = $this->teams->acceptForUser((int) ($body['invite_id'] ?? 0), $uid, (string) $user['email']);
+
+                    return $this->dash->redirect('/teams', 'You joined "' . $team . '".');
+
                 case 'team-remove':
                     $teamId = (int) ($body['team_id'] ?? 0);
                     $this->teams->removeMember($teamId, (int) ($body['user_id'] ?? 0), $uid);

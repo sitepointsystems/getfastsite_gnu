@@ -6,43 +6,124 @@
 {% include 'site-nav.html.twig' %}
 
 <div class="card">
-  <h2 style="margin-top:0">New / edit component</h2>
+  <h2 style="margin-top:0">{{ edit_component ? 'Edit component “' ~ edit_component.handle ~ '”' : 'New component' }}</h2>
   <form method="post" action="/sites/{{ site.handle }}/components/action">
     <input type="hidden" name="_csrf" value="{{ csrf }}">
     <input type="hidden" name="op" value="save">
     <div class="row">
-      <div><label>Handle <span class="mut">(lowercase, digits, dashes)</span></label><input type="text" name="handle" placeholder="price-badge" required></div>
+      <div><label>Handle <span class="mut">(lowercase, digits, dashes{{ edit_component ? ' — changing it saves a copy under the new handle' : '' }})</span></label><input type="text" name="handle" value="{{ edit_component ? edit_component.handle : '' }}" placeholder="price-badge" required></div>
       <div class="tight"><label>Type</label>
         <select name="type">
-          <option value="html">html ({{ '{{var}}' }} / {{ '{{{raw}}}' }})</option>
-          <option value="react">react (SSR → static)</option>
+          <option value="html" {{ not edit_component or edit_component.type == 'html' ? 'selected' : '' }}>html ({{ '{{var}}' }} / {{ '{{{raw}}}' }})</option>
+          <option value="react" {{ edit_component and edit_component.type == 'react' ? 'selected' : '' }}>react (SSR → static)</option>
         </select>
       </div>
+      <div class="tight"><label>Verbatim <span class="mut">(ship scripts as authored)</span></label><input type="checkbox" name="verbatim" value="1" {{ edit_component and edit_component.verbatim ? 'checked' : '' }}></div>
     </div>
     <div><label>Source code</label>
-      <textarea name="source_code" rows="10" style="width:100%;font-family:var(--mono,monospace)" placeholder="&lt;div class=&quot;badge&quot;&gt;{{ '{{label}}' }}&lt;/div&gt;" required></textarea>
+      <textarea name="source_code" rows="10" style="width:100%;font-family:var(--mono,monospace)" placeholder="&lt;div class=&quot;badge&quot;&gt;{{ '{{label}}' }}&lt;/div&gt;" required>{{ edit_component ? edit_component.sourceCode : '' }}</textarea>
     </div>
     <div><label>CSS <span class="mut">(optional — inlined per page that uses it)</span></label>
-      <textarea name="css" rows="4" style="width:100%;font-family:var(--mono,monospace)"></textarea>
+      <textarea name="css" rows="4" style="width:100%;font-family:var(--mono,monospace)">{{ edit_component ? edit_component.css : '' }}</textarea>
     </div>
     <div><label>Variables schema <span class="mut">(optional JSON)</span></label>
-      <textarea name="variables_schema" rows="3" style="width:100%;font-family:var(--mono,monospace)" placeholder='{"label":"string"}'></textarea>
+      <textarea name="variables_schema" rows="3" style="width:100%;font-family:var(--mono,monospace)" placeholder='{"label":"string"}'>{{ edit_component and edit_component.variablesSchema != '{}' ? edit_component.variablesSchema : '' }}</textarea>
     </div>
-    <p style="margin-top:1rem"><button class="button" type="submit">Save component</button></p>
+    <p class="sub" style="margin-top:.5rem">Verbatim keeps every tag exactly as written — <span class="mono">&lt;script&gt;</span>, <span class="mono">&lt;iframe&gt;</span>, event handlers — wrapped as a trusted embed, and the site's CSP relaxes so they actually run. Off = the zero-JS guarantee: active content is stripped from the output.</p>
+    <p style="margin-top:1rem"><button class="button" type="submit">{{ edit_component ? 'Save changes' : 'Save component' }}</button>
+    {% if edit_component %} <a class="button ghost" href="/sites/{{ site.handle }}/components">Cancel</a>{% endif %}</p>
   </form>
 </div>
 
+<div class="card">
+  <h2 style="margin-top:0">Hooks — auto-insert a component into pages</h2>
+  <p class="sub">A hook injects a component (typically a CTA) into every targeted page at build time — after the first paragraph, mid-text, top or bottom — without editing any content. Slugs are primary-language slugs (the home page's slug is <span class="mono">home</span>); one rule covers every locale. Saving republishes.</p>
+  <form method="post" action="/sites/{{ site.handle }}/components/action">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="op" value="hook-save">
+    <input type="hidden" name="id" value="{{ edit_hook ? edit_hook.id : 0 }}">
+    <div class="row">
+      <div><label>Label <span class="mut">(names the CTA in GTM reports)</span></label><input type="text" name="label" value="{{ edit_hook ? edit_hook.label : '' }}" placeholder="Newsletter CTA"></div>
+      <div class="tight"><label>Component</label>
+        <select name="component_handle" required>
+          <option value="">— pick —</option>
+          {% for c in components %}
+          <option value="{{ c.handle }}" {{ edit_hook and edit_hook.componentHandle == c.handle ? 'selected' : '' }}>{{ c.handle }} ({{ c.type }})</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="tight"><label>Enabled</label><input type="checkbox" name="enabled" value="1" {{ not edit_hook or edit_hook.enabled ? 'checked' : '' }}></div>
+    </div>
+    <div class="row">
+      <div class="tight"><label>Position</label>
+        <select name="position">
+          <option value="top" {{ edit_hook and edit_hook.position == 'top' ? 'selected' : '' }}>Top of text</option>
+          <option value="after_paragraph" {{ edit_hook and edit_hook.position == 'after_paragraph' ? 'selected' : '' }}>After paragraph №…</option>
+          <option value="middle" {{ edit_hook and edit_hook.position == 'middle' ? 'selected' : '' }}>Middle of text</option>
+          <option value="bottom" {{ not edit_hook or edit_hook.position == 'bottom' ? 'selected' : '' }}>Bottom of text</option>
+        </select>
+      </div>
+      <div class="tight"><label>Paragraph <span class="mut">(for "after paragraph")</span></label><input type="number" name="paragraph" min="1" max="500" value="{{ edit_hook ? edit_hook.paragraph : 1 }}"></div>
+      <div class="tight"><label>Applies to</label>
+        <select name="target">
+          <option value="posts" {{ not edit_hook or edit_hook.target == 'posts' ? 'selected' : '' }}>All posts</option>
+          <option value="pages" {{ edit_hook and edit_hook.target == 'pages' ? 'selected' : '' }}>All pages</option>
+          <option value="all" {{ edit_hook and edit_hook.target == 'all' ? 'selected' : '' }}>Posts + pages</option>
+        </select>
+      </div>
+      <div class="tight"><label>Priority <span class="mut">(order at same spot)</span></label><input type="number" name="priority" value="{{ edit_hook ? edit_hook.priority : 100 }}"></div>
+    </div>
+    <div class="row">
+      <div><label>Only these slugs <span class="mut">(optional, comma-separated — empty = every targeted page)</span></label><input type="text" name="include_slugs" value="{{ edit_hook ? edit_hook.includeSlugs|join(', ') : '' }}" placeholder=""></div>
+      <div><label>Never these slugs <span class="mut">(comma-separated)</span></label><input type="text" name="exclude_slugs" value="{{ edit_hook ? edit_hook.excludeSlugs|join(', ') : '' }}" placeholder="home, terms"></div>
+    </div>
+    <div><label>Values <span class="mut">(optional JSON passed to the component; the page's locale is added as <span class="mono">locale</span>)</span></label>
+      <textarea name="values" rows="2" style="width:100%;font-family:var(--mono,monospace)" placeholder='{"heading":"Get the newsletter","button":"Sign up"}'>{{ edit_hook and edit_hook.values is not empty ? edit_hook.values|json_encode : '' }}</textarea>
+    </div>
+    <p style="margin-top:1rem"><button class="button" type="submit">{{ edit_hook ? 'Update hook #' ~ edit_hook.id : 'Add hook' }}</button>
+    {% if edit_hook %} <a class="button ghost" href="/sites/{{ site.handle }}/components">Cancel</a>{% endif %}</p>
+  </form>
+
+  <table>
+    <tr><th>#</th><th>Label</th><th>Component</th><th>Position</th><th>Applies to</th><th>Slugs</th><th>Enabled</th><th></th></tr>
+    {% for h in hooks %}
+    <tr>
+      <td class="mut">{{ h.id }}</td>
+      <td>{{ h.label ?: '—' }}</td>
+      <td class="mono">{{ h.componentHandle }}</td>
+      <td>{{ h.position == 'after_paragraph' ? 'after paragraph ' ~ h.paragraph : h.position|replace({'_': ' '}) }}</td>
+      <td>{{ h.target }}</td>
+      <td class="mut">{% if h.includeSlugs %}only: {{ h.includeSlugs|join(', ') }}{% endif %}{% if h.includeSlugs and h.excludeSlugs %} · {% endif %}{% if h.excludeSlugs %}not: {{ h.excludeSlugs|join(', ') }}{% endif %}{% if not h.includeSlugs and not h.excludeSlugs %}—{% endif %}</td>
+      <td><span class="badge {{ h.enabled ? 'ready' : 'pending' }}">{{ h.enabled ? 'on' : 'off' }}</span></td>
+      <td style="white-space:nowrap">
+        <a class="button small ghost" href="/sites/{{ site.handle }}/components?hook={{ h.id }}">Edit</a>
+        <form method="post" action="/sites/{{ site.handle }}/components/action" style="display:inline" data-confirm="Delete hook #{{ h.id }}? The component itself is kept." data-confirm-title="Delete hook" data-confirm-ok="Delete" data-confirm-danger>
+          <input type="hidden" name="_csrf" value="{{ csrf }}">
+          <input type="hidden" name="op" value="hook-delete">
+          <input type="hidden" name="id" value="{{ h.id }}">
+          <button class="button small ghost" type="submit">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8" class="mut">No hooks yet — create a component above, then hook it into your posts here.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
 <table>
-  <tr><th>Handle</th><th>Type</th><th>Status</th><th>Warnings</th><th>Embed</th><th></th></tr>
+  <tr><th>Handle</th><th>Type</th><th>Status</th><th>Verbatim</th><th>Warnings</th><th>Embed</th><th></th></tr>
   {% for c in components %}
   <tr>
     <td class="mono">{{ c.handle }}</td>
     <td>{{ c.type }}</td>
     <td><span class="badge {{ c.status }}">{{ c.status }}</span></td>
+    <td>{% if c.verbatim %}<span class="badge ready">verbatim</span>{% else %}<span class="mut">—</span>{% endif %}</td>
     <td class="mut">{{ c.warnings|length ?: '—' }}</td>
     <td class="mono" style="user-select:all">&lt;div data-fs-component="{{ c.handle }}" data-values='{}'&gt;&lt;/div&gt;</td>
-    <td>
-      <form method="post" action="/sites/{{ site.handle }}/components/action" onsubmit="return confirm('Delete component {{ c.handle }}?')">
+    <td style="white-space:nowrap">
+      <a class="button small ghost" href="/sites/{{ site.handle }}/components?component={{ c.handle }}">Edit</a>
+      <form method="post" action="/sites/{{ site.handle }}/components/action" style="display:inline" data-confirm="Delete component “{{ c.handle }}”? Pages embedding it lose the block on the next publish." data-confirm-title="Delete component" data-confirm-ok="Delete" data-confirm-danger>
         <input type="hidden" name="_csrf" value="{{ csrf }}">
         <input type="hidden" name="op" value="delete">
         <input type="hidden" name="handle" value="{{ c.handle }}">
@@ -51,7 +132,7 @@
     </td>
   </tr>
   {% else %}
-  <tr><td colspan="6" class="mut">No components yet.</td></tr>
+  <tr><td colspan="7" class="mut">No components yet.</td></tr>
   {% endfor %}
 </table>
 {% endblock %}

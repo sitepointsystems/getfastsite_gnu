@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Fastsite\Dashboard\Handler;
 
 use Fastsite\Dashboard\Dash;
+use Fastsite\Http\PublicUrl;
 use Fastsite\Webhook\Mapper\WebhookMapperRegistry;
 use Fastsite\Webhook\Service\WebhookService;
 use Psr\Http\Message\ResponseInterface;
@@ -22,6 +23,7 @@ final class WebhooksScreenHandler implements RequestHandlerInterface
         private readonly Dash $dash,
         private readonly WebhookService $webhooks,
         private readonly WebhookMapperRegistry $mappers,
+        private readonly string $appUrl,
     ) {
     }
 
@@ -39,6 +41,9 @@ final class WebhooksScreenHandler implements RequestHandlerInterface
         return $this->dash->render($request, 'webhooks.html.twig', [
             'title' => $site->name . ' webhooks — fastsite',
             'site' => $site,
+            // The copy-pasteable URL a sender must call — absolute, on the
+            // engine's public origin (senders live outside this deployment).
+            'webhook_base' => PublicUrl::base($request, $this->appUrl) . '/webhooks/',
             'integrations' => $this->webhooks->listForSite($site->handle),
             'mapper_keys' => $this->mappers->keys(),
             'reveal' => $reveal,

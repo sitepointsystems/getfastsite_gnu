@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Fastsite\Mcp;
 
 use Fastsite\Access\AccessContext;
-use Nyholm\Psr7\Response;
+use GuzzleHttp\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
@@ -84,7 +84,12 @@ final class McpHandler implements RequestHandlerInterface
                     . '(pass a `site` for its locales + embed syntax) and follow it — it covers the body-only '
                     . 'content model, required image dimensions and recommended sizes per role, zero-JS/SEO/a11y '
                     . 'rules, and the `<img data-media-id>` / `<div data-fs-component>` embed syntax. Reference '
-                    . 'images by media id from `upload_media_from_url` (never external URLs); alt text is required. '
+                    . 'images by media id, never external URLs; alt text is required. To get a file you HOLD into the '
+                    . 'library, use `create_upload_ticket` and PUT the raw bytes to the URL it returns — that is the '
+                    . 'path with no practical size limit, because the bytes never travel through your own output. '
+                    . '`upload_media_from_url` is for a file already hosted somewhere; `upload_media_from_base64` is a '
+                    . 'last resort for something small, since its base64 is an argument you must write out token by '
+                    . 'token and it truncates rather than erroring past roughly 100 KB of file. '
                     . 'On multilingual shells the language switcher is NEVER inserted automatically — call '
                     . '`get_language_switcher` for the placement markers (`<!--fs:languages-->` / `<li data-fs-languages></li>`), '
                     . 'the rendered dropdown HTML, and a customizable Twig variant, then place it where the design wants it.',

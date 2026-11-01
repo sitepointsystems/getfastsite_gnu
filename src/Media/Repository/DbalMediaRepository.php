@@ -155,6 +155,47 @@ final class DbalMediaRepository implements MediaRepository
         }
     }
 
+    private const UNOPTIMIZED_WHERE = "kind = 'image' AND status = 'ready' AND deleted_at IS NULL AND optimized_at IS NULL";
+
+    public function unoptimizedImageIds(string $site): array
+    {
+        $rows = $this->databases->site($site)->fetchFirstColumn(
+            'SELECT id FROM media WHERE ' . self::UNOPTIMIZED_WHERE . ' ORDER BY id',
+        );
+
+        return array_map(intval(...), $rows);
+    }
+
+    public function countUnoptimizedImages(string $site): int
+    {
+        return (int) $this->databases->site($site)->fetchOne(
+            'SELECT COUNT(*) FROM media WHERE ' . self::UNOPTIMIZED_WHERE,
+        );
+    }
+
+    public function readyImageIds(string $site): array
+    {
+        $rows = $this->databases->site($site)->fetchFirstColumn(
+            "SELECT id FROM media WHERE kind = 'image' AND status = 'ready' AND deleted_at IS NULL ORDER BY id",
+        );
+
+        return array_map(intval(...), $rows);
+    }
+
+    public function readyIdsOfKind(string $site, array $kinds): array
+    {
+        if ($kinds === []) {
+            return [];
+        }
+        $rows = $this->databases->site($site)->fetchFirstColumn(
+            'SELECT id FROM media WHERE kind IN (' . implode(',', array_fill(0, \count($kinds), '?')) . ")
+               AND status = 'ready' AND deleted_at IS NULL ORDER BY id",
+            array_values($kinds),
+        );
+
+        return array_map(intval(...), $rows);
+    }
+
     public function loadManyWithVariants(string $site, array $ids): array
     {
         if ($ids === []) {

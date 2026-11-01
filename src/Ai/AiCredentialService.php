@@ -33,7 +33,7 @@ final class AiCredentialService
     public function listForUser(int $userId): array
     {
         return $this->databases->engine()->fetchAllAssociative(
-            'SELECT id, label, key_hint, base_url, model, factcheck_model, research_model, created_at, last_used_at
+            'SELECT id, label, key_hint, base_url, model, translate_model, factcheck_model, research_model, created_at, last_used_at
              FROM ai_credentials WHERE user_id = ? ORDER BY id DESC',
             [$userId],
         );
@@ -51,7 +51,7 @@ final class AiCredentialService
         );
     }
 
-    public function add(int $userId, string $label, string $key, string $baseUrl = '', string $model = '', string $factcheckModel = '', string $researchModel = ''): int
+    public function add(int $userId, string $label, string $key, string $baseUrl = '', string $model = '', string $factcheckModel = '', string $researchModel = '', string $translateModel = ''): int
     {
         $label = trim($label);
         $key = trim($key);
@@ -74,6 +74,7 @@ final class AiCredentialService
             'key_hint' => self::mask($key),
             'base_url' => rtrim(trim($baseUrl), '/'),
             'model' => mb_substr(trim($model), 0, 120),
+            'translate_model' => mb_substr(trim($translateModel), 0, 120),
             'factcheck_model' => mb_substr(trim($factcheckModel), 0, 120),
             'research_model' => mb_substr(trim($researchModel), 0, 120),
             'created_at' => $this->clock->iso(),
@@ -86,7 +87,7 @@ final class AiCredentialService
      * Edit a credential the user owns: label + models always; the key only when
      * a new one is supplied (blank leaves the saved key unchanged).
      */
-    public function update(int $id, int $userId, string $label, string $key, string $model, string $factcheckModel, string $researchModel = ''): void
+    public function update(int $id, int $userId, string $label, string $key, string $model, string $factcheckModel, string $researchModel = '', string $translateModel = ''): void
     {
         $label = trim($label);
         if ($label === '') {
@@ -103,6 +104,7 @@ final class AiCredentialService
         $fields = [
             'label' => mb_substr($label, 0, 200),
             'model' => mb_substr(trim($model), 0, 120),
+            'translate_model' => mb_substr(trim($translateModel), 0, 120),
             'factcheck_model' => mb_substr(trim($factcheckModel), 0, 120),
             'research_model' => mb_substr(trim($researchModel), 0, 120),
         ];
@@ -149,7 +151,7 @@ final class AiCredentialService
             return null;
         }
         $row = $this->databases->engine()->fetchAssociative(
-            'SELECT id, key_enc, base_url, model, factcheck_model, research_model FROM ai_credentials WHERE id = ?',
+            'SELECT id, key_enc, base_url, model, translate_model, factcheck_model, research_model FROM ai_credentials WHERE id = ?',
             [$site->aiCredentialId],
         );
         if ($row === false) {
@@ -169,6 +171,7 @@ final class AiCredentialService
             baseUrl: (string) ($row['base_url'] ?? ''),
             model: (string) ($row['model'] ?? ''),
             factcheckModel: (string) ($row['factcheck_model'] ?? ''),
+            translateModel: (string) ($row['translate_model'] ?? ''),
             researchModel: (string) ($row['research_model'] ?? ''),
         );
     }

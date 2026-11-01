@@ -81,4 +81,41 @@ final class SignatureVerifierTest extends TestCase
 
         self::assertFalse($verifier->verify($forged, '{"a":1}', ''));
     }
+
+    public function testPlainSignatureVerifies(): void
+    {
+        // The AutoSEO scheme: hex HMAC of the raw body alone, no timestamp.
+        $verifier = new SignatureVerifier($this->clockAt(1_000_000));
+        $sig = hash_hmac('sha256', '{"a":1}', 'aseo_wh_token');
+
+        self::assertTrue($verifier->verifyPlain($sig, '{"a":1}', 'aseo_wh_token'));
+        self::assertTrue($verifier->verifyPlain('sha256=' . $sig, '{"a":1}', 'aseo_wh_token'));
+        self::assertTrue($verifier->verifyPlain(strtoupper($sig), '{"a":1}', 'aseo_wh_token'));
+
+        self::assertFalse($verifier->verifyPlain($sig, '{"a":2}', 'aseo_wh_token'));
+        self::assertFalse($verifier->verifyPlain($sig, '{"a":1}', 'other-secret'));
+        self::assertFalse($verifier->verifyPlain('garbage', '{"a":1}', 'aseo_wh_token'));
+        self::assertFalse($verifier->verifyPlain('', '{"a":1}', 'aseo_wh_token'));
+    }
+
+    public function testPlainSignatureEmptySecretNeverVerifies(): void
+    {
+        $verifier = new SignatureVerifier($this->clockAt(1_000_000));
+        $forged = hash_hmac('sha256', '{"a":1}', '');
+
+        self::assertFalse($verifier->verifyPlain($forged, '{"a":1}', ''));
+    }
+
+    public function testBearerVerifies(): void
+    {
+        $verifier = new SignatureVerifier($this->clockAt(1_000_000));
+
+        self::assertTrue($verifier->verifyBearer('Bearer aseo_wh_token', 'aseo_wh_token'));
+        self::assertTrue($verifier->verifyBearer('bearer aseo_wh_token', 'aseo_wh_token'));
+
+        self::assertFalse($verifier->verifyBearer('Bearer wrong', 'aseo_wh_token'));
+        self::assertFalse($verifier->verifyBearer('aseo_wh_token', 'aseo_wh_token'));
+        self::assertFalse($verifier->verifyBearer('', 'aseo_wh_token'));
+        self::assertFalse($verifier->verifyBearer('Bearer ', ''));
+    }
 }

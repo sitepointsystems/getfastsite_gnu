@@ -1,0 +1,36 @@
+{% extends 'base.html.twig' %}
+
+{% block main %}
+<section class="section">
+  <div class="wrap">
+    {% include 'partials/breadcrumb.html.twig' %}
+    <header class="archive-header">
+      <h1>{{ category.name }}{% if pagination.current > 1 %} <span class="muted">({{ t('page') }} {{ pagination.current }})</span>{% endif %}</h1>
+      {% if pagination.current == 1 and category.description_html %}<div class="archive-intro">{{ category.description_html|raw }}</div>{% endif %}
+    </header>
+    {% if posts %}
+    <div class="cards">
+      {% for post in posts %}
+      <article class="card">
+        {% if post.featured_thumb %}<a class="card-media" href="{{ post.url }}">{{ post.featured_thumb|raw }}</a>{% endif %}
+        <h2><a href="{{ post.url }}">{{ post.title }}</a></h2>
+        {% if post.excerpt %}<p>{{ post.excerpt }}</p>{% endif %}
+        {% if post.published_at %}<time datetime="{{ post.published_at }}">{{ post.published_at|date('M j, Y') }}</time>{% endif %}
+      </article>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if pagination.total > 1 %}
+    <nav class="pager" aria-label="{{ t('pagination') }}">
+      {% if pagination.prev_url %}<a href="{{ pagination.prev_url }}" rel="prev">{{ t('previous_page') }}</a>{% endif %}
+      <ol>
+        {% for p in pagination.pages %}
+        <li>{% if p.current %}<span aria-current="page">{{ p.number }}</span>{% else %}<a href="{{ p.url }}">{{ p.number }}</a>{% endif %}</li>
+        {% endfor %}
+      </ol>
+      {% if pagination.next_url %}<a href="{{ pagination.next_url }}" rel="next">{{ t('next_page') }}</a>{% endif %}
+    </nav>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

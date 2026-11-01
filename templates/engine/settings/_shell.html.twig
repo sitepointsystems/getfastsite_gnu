@@ -1,0 +1,172 @@
+    <div class="card">
+      <h2 style="margin-top:0">Shell files</h2>
+      <ul class="filetree">
+        {% for f in files %}
+        <li><a href="?file={{ f.path|url_encode }}">{{ f.path }}</a> <span class="mut">{{ (f.size_bytes / 1024)|number_format(1) }} KB</span></li>
+        {% endfor %}
+      </ul>
+    </div>
+
+    {% if edit_file %}
+    <dialog id="shell-editor" class="modal wide">
+      <form method="post" action="/sites/{{ site.handle }}/settings/action" id="shell-editor-form">
+        <div class="m-head" style="display:flex;align-items:baseline;gap:1rem;flex-wrap:wrap">
+          <h3 style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Editing <span class="mono">{{ edit_file }}</span></h3>
+          <label style="display:flex;align-items:center;gap:.45rem;margin:0;font-size:.82rem">Syntax
+            <select id="shell-editor-mode" style="width:auto;padding:.3rem .5rem;font-size:.85rem"></select>
+          </label>
+        </div>
+        <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="tab" value="{{ tab }}">
+        <input type="hidden" name="action" value="shell-save">
+        <input type="hidden" name="path" value="{{ edit_file }}">
+        <div class="m-body">
+          <textarea name="content" id="shell-editor-src" class="code" spellcheck="false">
+{{ edit_content }}</textarea>
+        </div>
+        <div class="m-actions">
+          <a class="button ghost" href="/sites/{{ site.handle }}/settings?tab=shell">Close</a>
+          <button class="button" type="submit">Save (validates + rebuilds)</button>
+        </div>
+      </form>
+    </dialog>
+    <link rel="stylesheet" href="/assets/codemirror/lib/codemirror.css">
+    <style>
+      /* CodeMirror on the engine tokens, scoped to the editor modal. */
+      #shell-editor .CodeMirror{height:66vh;background:var(--bg-2);color:var(--text);border:1px solid var(--border);border-radius:8px;font-family:var(--mono);font-size:.85rem;line-height:1.55}
+      #shell-editor .CodeMirror-gutters{background:var(--bg-2);border-right:1px solid var(--border)}
+      #shell-editor .CodeMirror-linenumber{color:var(--muted)}
+      #shell-editor .CodeMirror-cursor{border-left:2px solid var(--accent)}
+      #shell-editor .CodeMirror-selected,#shell-editor .CodeMirror-focused .CodeMirror-selected{background:rgba(42,134,255,.25)}
+      #shell-editor .CodeMirror-activeline-background{background:rgba(255,255,255,.045)}
+      #shell-editor .CodeMirror-matchingbracket{color:var(--ok) !important;outline:1px solid rgba(6,214,160,.45)}
+      #shell-editor .cm-comment{color:var(--muted);font-style:italic}
+      #shell-editor .cm-tag{color:#5ccfe6}
+      #shell-editor .cm-bracket{color:#9bb0c6}
+      #shell-editor .cm-attribute{color:#ffd580}
+      #shell-editor .cm-string,#shell-editor .cm-string-2{color:#a8e07a}
+      #shell-editor .cm-number,#shell-editor .cm-atom{color:#f78c6c}
+      #shell-editor .cm-keyword{color:#c792ea}
+      #shell-editor .cm-def{color:#82aaff}
+      #shell-editor .cm-variable{color:var(--text)}
+      #shell-editor .cm-variable-2{color:#82aaff}
+      #shell-editor .cm-variable-3,#shell-editor .cm-type{color:#5ccfe6}
+      #shell-editor .cm-property{color:#7ab3ff}
+      #shell-editor .cm-operator{color:#89ddff}
+      #shell-editor .cm-qualifier,#shell-editor .cm-builtin{color:#ffd580}
+      #shell-editor .cm-meta{color:#9bb0c6}
+      #shell-editor .cm-error{color:var(--danger)}
+    </style>
+    <script src="/assets/codemirror/lib/codemirror.js"></script>
+    <script src="/assets/codemirror/mode/xml/xml.js"></script>
+    <script src="/assets/codemirror/mode/css/css.js"></script>
+    <script src="/assets/codemirror/mode/javascript/javascript.js"></script>
+    <script src="/assets/codemirror/mode/htmlmixed/htmlmixed.js"></script>
+    <script src="/assets/codemirror/addon/mode/multiplex.js"></script>
+    <script src="/assets/codemirror/mode/twig/twig.js"></script>
+    <script src="/assets/codemirror/addon/edit/matchbrackets.js"></script>
+    <script src="/assets/codemirror/addon/edit/closebrackets.js"></script>
+    <script src="/assets/codemirror/addon/selection/active-line.js"></script>
+    <script>
+    (function(){
+      var dlg = document.getElementById('shell-editor');
+      var form = document.getElementById('shell-editor-form');
+      var path = {{ edit_file|json_encode|raw }};
+      var closeUrl = '/sites/{{ site.handle }}/settings';
+
+      // Open BEFORE initialising: CodeMirror measures itself, so it must be
+      // created inside a visible dialog (a closed one is display:none).
+      dlg.showModal();
+
+      var MODES = [
+        ['twig', 'Twig / HTML', {name: 'twig', base: 'text/html'}],
+        ['html', 'HTML', 'htmlmixed'],
+        ['css', 'CSS', 'css'],
+        ['js', 'JavaScript', 'javascript'],
+        ['json', 'JSON', {name: 'javascript', json: true}],
+        ['xml', 'XML / SVG', 'xml'],
+        ['plain', 'Plain text', null]
+      ];
+      function detect(p){
+        p = p.toLowerCase();
+        if (p.endsWith('.twig')) return 'twig';
+        if (p.endsWith('.html') || p.endsWith('.htm')) return 'html';
+        if (p.endsWith('.css')) return 'css';
+        if (p.endsWith('.js') || p.endsWith('.mjs')) return 'js';
+        if (p.endsWith('.json')) return 'json';
+        if (p.endsWith('.svg') || p.endsWith('.xml')) return 'xml';
+        return 'plain';
+      }
+      function modeFor(key){
+        for (var i = 0; i < MODES.length; i++) if (MODES[i][0] === key) return MODES[i][2];
+        return null;
+      }
+      var sel = document.getElementById('shell-editor-mode');
+      MODES.forEach(function(m){
+        var o = document.createElement('option');
+        o.value = m[0]; o.textContent = m[1];
+        sel.appendChild(o);
+      });
+      sel.value = detect(path);
+
+      var cm = CodeMirror.fromTextArea(document.getElementById('shell-editor-src'), {
+        mode: modeFor(sel.value),
+        lineNumbers: true,
+        indentUnit: 2, tabSize: 2, indentWithTabs: false,
+        matchBrackets: true, autoCloseBrackets: true, styleActiveLine: true,
+        extraKeys: {
+          'Ctrl-S': function(){ form.requestSubmit(); },
+          'Cmd-S': function(){ form.requestSubmit(); }
+        }
+      });
+      sel.addEventListener('change', function(){ cm.setOption('mode', modeFor(sel.value)); });
+
+      // Leaving the modal (Esc / backdrop / Close) returns to the clean settings
+      // URL so ?file= never lingers on a page with no visible editor. Both
+      // cancel (Esc) and close (backdrop via the layout's dialog wiring) lead
+      // here; the flag keeps a save submit from being hijacked into a redirect.
+      var submitting = false, left = false;
+      function leave(){ if (!submitting && !left){ left = true; window.location = closeUrl; } }
+      form.addEventListener('submit', function(){ submitting = true; cm.save(); });
+      dlg.addEventListener('cancel', leave);
+      dlg.addEventListener('close', leave);
+    })();
+    </script>
+    {% endif %}
+
+    <div class="card">
+      <h2 style="margin-top:0">Shell snapshots</h2>
+      <form method="post" action="/sites/{{ site.handle }}/settings/action" class="row">
+        <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="tab" value="{{ tab }}">
+        <input type="hidden" name="action" value="shell-snapshot">
+        <div><label>Note</label><input type="text" name="note" placeholder="before redesign"></div>
+        <div class="tight"><button class="button" type="submit">Snapshot now</button></div>
+      </form>
+      <table style="margin-top:1rem">
+        <tr><th>Rev</th><th>Note</th><th>When</th><th></th></tr>
+        {% for r in revisions %}
+        <tr>
+          <td>#{{ r.rev_no }}</td><td>{{ r.note }}</td><td class="mut">{{ r.created_at }}</td>
+          <td>
+            <div class="rowacts">
+              <form method="post" action="/sites/{{ site.handle }}/settings/action" class="inline">
+                <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="tab" value="{{ tab }}">
+                <input type="hidden" name="action" value="shell-restore">
+                <input type="hidden" name="rev" value="{{ r.rev_no }}">
+                <button class="button small ghost" type="submit">Restore</button>
+              </form>
+              <form method="post" action="/sites/{{ site.handle }}/settings/action" class="inline"
+                    data-confirm="Delete snapshot #{{ r.rev_no }}? The archive is removed for good — this is the only copy, and it is not what Restore rolls back to afterwards."
+                    data-confirm-title="Delete snapshot" data-confirm-ok="Delete" data-confirm-danger>
+                <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="tab" value="{{ tab }}">
+                <input type="hidden" name="action" value="shell-delete">
+                <input type="hidden" name="rev" value="{{ r.rev_no }}">
+                <button class="button small danger" type="submit">Delete</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="mut">No snapshots yet.</td></tr>
+        {% endfor %}
+      </table>
+    </div>

@@ -3,9 +3,17 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
+      # Always re-pull the base image instead of reusing one already on the
+      # server. The floating php:8.3-fpm-alpine tag is only "latest" if the
+      # build actually fetches it: Coolify Force-deploy-without-cache clears
+      # the LAYER cache, not the base image. Measured 2026-10-21 during
+      # CVE-2026-109618/109619, when the local daemon happily served a
+      # three-week-old 8.3.35 base.
+      pull: true
       args:
-        # public is the only flavor in this distribution.
-        FLAVOR: ${FLAVOR:-public}
+        # private (default) | public — set FLAVOR=public in the deploy env
+        # to build the open-source flavor.
+        FLAVOR: ${FLAVOR:-private}
     expose:
       - "8080"
     environment:

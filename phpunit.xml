@@ -10,4 +10,13 @@
             <directory>tests</directory>
         </testsuite>
     </testsuites>
+    <php>
+        <!-- The suite runs in ONE process and many of its tests build whole
+             static sites, so peak memory tracks the number of tests rather
+             than any single one. It sat at ~120 MB against PHP's 128 MB CLI
+             default until the forms tests tipped it over, which surfaced as a
+             fatal in whichever unrelated test happened to run last. Set it
+             here rather than expecting anyone to remember a -d flag. -->
+        <ini name="memory_limit" value="512M"/>
+    </php>
 </phpunit>

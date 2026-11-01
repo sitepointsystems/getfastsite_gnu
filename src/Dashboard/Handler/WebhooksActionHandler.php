@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Fastsite\Dashboard\Handler;
 
 use Fastsite\Dashboard\Dash;
+use Fastsite\Http\PublicUrl;
 use Fastsite\Shared\Queue\JobQueue;
 use Fastsite\Webhook\Service\WebhookService;
 use Psr\Http\Message\ResponseInterface;
@@ -18,6 +19,7 @@ final class WebhooksActionHandler implements RequestHandlerInterface
         private readonly Dash $dash,
         private readonly WebhookService $webhooks,
         private readonly JobQueue $queue,
+        private readonly string $appUrl,
     ) {
     }
 
@@ -47,7 +49,19 @@ final class WebhooksActionHandler implements RequestHandlerInterface
 
                     // Reveal the fresh secret via the re-revealable panel (the
                     // secret itself never travels in the redirect query).
-                    return $this->dash->redirect($base . '?secret_for=' . $result['id'], 'Webhook created. Point your sender at /webhooks/' . $result['slug'] . '.');
+                    return $this->dash->redirect(
+                        $base . '?secret_for=' . $result['id'],
+                        'Webhook created. Point your sender at ' . PublicUrl::base($request, $this->appUrl) . '/webhooks/' . $result['slug'] . '.',
+                    );
+
+                case 'webhook-secret':
+                    // Sender-owned credential (e.g. AutoSEO's endpoint token):
+                    // store it as the integration secret so its bearer/HMAC
+                    // verify against it.
+                    $id = (int) ($body['id'] ?? 0);
+                    $this->webhooks->setSecret($id, $site->handle, (string) ($body['secret'] ?? ''));
+
+                    return $this->dash->redirect($base . '?secret_for=' . $id, 'Webhook secret updated.');
 
                 case 'webhook-toggle':
                     $this->webhooks->setActive((int) ($body['id'] ?? 0), $site->handle, (string) ($body['active'] ?? '') === '1');

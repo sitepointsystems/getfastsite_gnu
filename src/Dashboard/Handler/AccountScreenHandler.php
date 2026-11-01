@@ -46,21 +46,42 @@ final class AccountScreenHandler implements RequestHandlerInterface
         $user = $this->dash->user($request);
         $engine = $this->databases->engine();
 
+        $keys = $engine->fetchAllAssociative(
+            'SELECT id, name, key_id, scopes, sites, last_used_at, revoked_at, created_at
+             FROM api_keys WHERE user_id = ? ORDER BY id DESC LIMIT 50',
+            [$user['id']],
+        );
+        // ?key={id} opens the scope editor — the same server-rendered panel
+        // convention as the Components screen's ?component= and Media's
+        // ?crop=. The list is already scoped to this user, so a foreign or
+        // stale id simply finds nothing and the card renders normally: never
+        // an error, and never an oracle for whether someone else's key exists.
+        // A revoked key is deliberately not editable; rotate or create one.
+        $editKey = null;
+        $editId = (int) ($request->getQueryParams()['key'] ?? 0);
+        foreach ($keys as $k) {
+            if ((int) $k['id'] === $editId && $k['revoked_at'] === null) {
+                $editKey = $k;
+                break;
+            }
+        }
+
         return $extra + [
             'title' => 'Account — fastsite',
             'scope_catalog' => ScopeCatalog::all(),
             'github_creds' => $this->githubCreds->listForUser($user['id']),
             'ai_creds' => $this->aiCreds->listForUser($user['id']),
             'or_models' => $this->orModels->list(),
-            'ai_model_default' => 'anthropic/claude-sonnet-latest',
+            'ai_model_default' => '~anthropic/claude-sonnet-latest',
+            // Translation defaults to a fast cheap model on purpose: it is the
+            // highest-volume AI call the engine makes, so a frontier model
+            // here is what runs up the bill and trips the rate limit.
+            'ai_translate_default' => 'google/gemini-2.5-flash-lite',
             'ai_factcheck_default' => 'perplexity/sonar',
             'ai_research_default' => 'perplexity/sonar',
             'totp_enabled' => $this->totp->isEnabled($user['id']),
-            'keys' => $engine->fetchAllAssociative(
-                'SELECT id, name, key_id, scopes, sites, last_used_at, revoked_at, created_at
-                 FROM api_keys WHERE user_id = ? ORDER BY id DESC LIMIT 50',
-                [$user['id']],
-            ),
+            'keys' => $keys,
+            'edit_key' => $editKey,
             'apps' => $engine->fetchAllAssociative(
                 "SELECT t.client_id, c.client_name, MAX(t.created_at) AS connected_at, COUNT(*) AS tokens
                  FROM oauth_tokens t JOIN oauth_clients c ON c.client_id = t.client_id

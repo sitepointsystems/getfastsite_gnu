@@ -34,7 +34,7 @@ final class ContentTrashHandler implements RequestHandlerInterface
         $type = $request->getQueryParams()['type'] ?? null;
         $type = \in_array($type, ['post', 'page'], true) ? $type : null;
 
-        $items = array_map(ApiHelpers::contentToArray(...), $this->content->listTrashed($site, $type));
+        $items = array_map(static fn ($c): array => ApiHelpers::contentToArray($c, $site), $this->content->listTrashed($site, $type));
 
         return ApiResponse::success(['items' => $items, 'total' => \count($items)]);
     }

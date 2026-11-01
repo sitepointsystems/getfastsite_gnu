@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Fastsite\Tests\Integration;
 
+use Fastsite\Access\OAuth\ScopeCatalog;
 use Fastsite\Access\Service\ApiKeyService;
 use Fastsite\Identity\Service\UserService;
 use Fastsite\Shared\Clock\SystemClock;
@@ -171,5 +172,82 @@ final class ApiKeyTest extends TestCase
     {
         $this->expectException(\InvalidArgumentException::class);
         $this->keys->create($this->userId, 'bad', ['world:domination']);
+    }
+
+    /**
+     * The one that matters: verify() caches the scope list for five minutes,
+     * so a scope removed in the UI that keeps working until the TTL lapses is
+     * exactly the quiet failure this feature must not ship with.
+     */
+    public function testUpdatedScopesTakeEffectImmediatelyDespiteCache(): void
+    {
+        $key = $this->keys->create($this->userId, 'test', ['content:write', 'publish']);
+
+        $before = $this->keys->verify($key['token']); // warms the cache
+        self::assertNotNull($before);
+        self::assertTrue($before->hasScope('publish'));
+
+        $this->keys->updateScopes($key['id'], ['content:write']);
+
+        $after = $this->keys->verify($key['token']);
+        self::assertNotNull($after, 'the token itself must keep working');
+        self::assertFalse($after->hasScope('publish'), 'removed scope still live — cache not invalidated');
+        self::assertTrue($after->hasScope('content:write'));
+    }
+
+    public function testUpdateScopesCanWidenAndKeepsTheSameToken(): void
+    {
+        $key = $this->keys->create($this->userId, 'test', ['content:read'], ['demo']);
+        self::assertNotNull($this->keys->verify($key['token']));
+
+        $this->keys->updateScopes($key['id'], ['content:read', 'media:write']);
+
+        $access = $this->keys->verify($key['token']);
+        self::assertNotNull($access);
+        self::assertTrue($access->hasScope('media:write'));
+        self::assertTrue($access->allowsSite('demo'), 'sites must be untouched by a scope edit');
+    }
+
+    public function testUpdateScopesRejectsUnknownAndEmpty(): void
+    {
+        $key = $this->keys->create($this->userId, 'test', ['content:read']);
+
+        try {
+            $this->keys->updateScopes($key['id'], ['world:domination']);
+            self::fail('expected an unknown scope to be rejected');
+        } catch (\InvalidArgumentException) {
+        }
+
+        try {
+            $this->keys->updateScopes($key['id'], []);
+            self::fail('expected an empty scope list to be rejected');
+        } catch (\InvalidArgumentException) {
+        }
+
+        // Neither attempt may have touched the stored row.
+        $access = $this->keys->verify($key['token']);
+        self::assertNotNull($access);
+        self::assertTrue($access->hasScope('content:read'));
+    }
+
+    public function testUpdateScopesRefusesARevokedKey(): void
+    {
+        $key = $this->keys->create($this->userId, 'test', ['content:read']);
+        $this->keys->revoke($key['id']);
+
+        $this->expectException(\RuntimeException::class);
+        $this->keys->updateScopes($key['id'], ['publish']);
+    }
+
+    /**
+     * The key-create and scope-edit grids render from ScopeCatalog, so a scope
+     * that is valid but undescribed cannot be granted through the dashboard at
+     * all — and the editor would strip it from a key that already had it. That
+     * is precisely what had happened to forms:read / forms:write.
+     */
+    public function testScopeCatalogDescribesEveryGrantableScope(): void
+    {
+        $missing = array_diff(ApiKeyService::SCOPES, array_keys(ScopeCatalog::all()));
+        self::assertSame([], array_values($missing), 'scopes with no ScopeCatalog entry cannot be granted in the UI');
     }
 }

@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Fastsite\Tests\Unit;
 
 use Fastsite\Http\PublicUrl;
-use Nyholm\Psr7\ServerRequest;
+use GuzzleHttp\Psr7\ServerRequest;
 use PHPUnit\Framework\TestCase;
 
 /**

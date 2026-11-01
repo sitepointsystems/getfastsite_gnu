@@ -61,6 +61,8 @@ final class SiteCreateHandler implements RequestHandlerInterface
             'base_url' => $site->baseUrl,
             'primary_locale' => $site->primaryLocale,
             'status' => $site->status,
+            // Off by default: a new site is indexable from its first publish.
+            'development' => $site->development,
         ], 201);
     }
 }

@@ -49,6 +49,33 @@ final class EngineView
             $this->twig->addFunction(new \Twig\TwigFunction('locale_label', [\Fastsite\Shared\Locales::class, 'label']));
             // Real flag SVG URL (public/flags/{cc}.svg) — the icon used everywhere.
             $this->twig->addFunction(new \Twig\TwigFunction('locale_flag_url', [\Fastsite\Shared\Locales::class, 'flagUrl']));
+
+            // api_keys.scopes and .sites are stored as a JSON array and the key
+            // tables select the raw column, so printing one verbatim put an
+            // unbreakable ~120-character string in a table cell — which is what
+            // used to push the Access table past the page width. Decoded here
+            // rather than in each screen handler so both tables render from one
+            // rule; pairs with _chiplist.html.twig.
+            $this->twig->addFilter(new \Twig\TwigFilter(
+                'json_list',
+                /** @return list<string> */
+                static function (mixed $value): array {
+                    if (\is_string($value)) {
+                        $value = $value === '' ? [] : json_decode($value, true);
+                    }
+                    if (!\is_array($value)) {
+                        return [];
+                    }
+                    $out = [];
+                    foreach ($value as $item) {
+                        if (\is_scalar($item)) {
+                            $out[] = (string) $item;
+                        }
+                    }
+
+                    return $out;
+                },
+            ));
         }
 
         return $this->twig;

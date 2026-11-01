@@ -9,10 +9,28 @@
     {path: nav_base ~ '/media',      label: 'Media'},
     {path: nav_base ~ '/files',      label: 'Files'},
     {path: nav_base ~ '/components', label: 'Components'},
+    {path: nav_base ~ '/forms',      label: 'Forms'},
+    {path: nav_base ~ '/translations', label: 'Translations'},
+    {path: nav_base ~ '/audit',      label: 'Audit'},
     {path: nav_base ~ '/settings',   label: 'Settings'}
   ] %}
     <a class="button small {{ path == s.path ? '' : 'ghost' }}" href="{{ s.path }}">{{ s.label }}</a>
   {% endfor %}
   <span class="sitenav-gap"></span>
+  {# Visible on EVERY screen of the site, not just Settings. Someone writing
+     content should be able to see that none of it can be found yet. #}
+  {% if site.development %}<a class="badge warn" style="text-decoration:none;align-self:center" href="{{ nav_base }}/settings" title="Every page publishes with noindex, nofollow. Click to go live.">in development</a>{% endif %}
   <a class="button small ghost" href="{{ nav_base }}/preview/" target="_blank" rel="noopener">Preview ↗</a>
+  {# Publishing used to live only on the sites overview, which meant leaving
+     whatever you were working on to ship it. `display:contents` on the form so
+     its button is a direct flex item of the nav row — a <form> wrapper would
+     be the flex item instead and size differently from the links beside it.
+     `back` returns you to the screen you pressed it on; without it the action
+     redirects to Content, which is where it used to redirect from. #}
+  <form method="post" action="{{ nav_base }}/content/action" style="display:contents">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="action" value="publish-site">
+    <input type="hidden" name="back" value="{{ path }}">
+    <button class="button small" type="submit">Build &amp; publish</button>
+  </form>
 </div>

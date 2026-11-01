@@ -6,7 +6,7 @@ namespace Fastsite\Dashboard\Handler;
 
 use Fastsite\Dashboard\Dash;
 use Fastsite\Shared\Database\SiteDatabaseManager;
-use Nyholm\Psr7\Response;
+use GuzzleHttp\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;

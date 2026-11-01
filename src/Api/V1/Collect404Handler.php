@@ -6,7 +6,7 @@ namespace Fastsite\Api\V1;
 
 use Fastsite\Site\Repository\SiteRepository;
 use Fastsite\Site\Service\RedirectService;
-use Nyholm\Psr7\Response;
+use GuzzleHttp\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;

@@ -63,7 +63,7 @@ final class ComponentRenderer
         $warnings = [];
         $cssParts = [];
         $rendered = [];      // index => html
-        $reactBatch = [];    // id => {bundlePath, props, cacheKey, componentId}
+        $reactBatch = [];    // id => {bundlePath, props, cacheKey, componentId, component}
 
         foreach ($placeholders as $p) {
             $component = $components[$p['handle']] ?? null;
@@ -76,15 +76,23 @@ final class ComponentRenderer
                 $cssParts[$component->id] = $component->css;
             }
 
-            $cacheKey = hash('sha256', $component->bundleHash . "\x1f" . json_encode($p['values']) . "\x1f" . $locale);
+            // The verbatim flag is IN the key: toggling it changes the output
+            // for identical source + values, and a cache hit on the pre-toggle
+            // render would make the switch look dead.
+            $cacheKey = hash('sha256', $component->bundleHash . "\x1f" . ($component->verbatim ? 'v1' : 'v0') . "\x1f" . json_encode($p['values']) . "\x1f" . $locale);
             $cached = $this->repository->cachedRender($site, $cacheKey);
             if ($cached !== null) {
-                $rendered[$p['index']] = $cached;
+                // Renders are stored finalized now, but rows written before
+                // that were stored RAW (the strip used to happen at
+                // replacement time) — finalize on read too. Idempotent both
+                // ways: re-stripping stripped output changes nothing, and the
+                // verbatim wrap skips an already-marked fragment.
+                $rendered[$p['index']] = $this->finalize($component, $cached, $warnings);
                 continue;
             }
 
             if ($component->type === 'html') {
-                $out = $this->renderHtml($component, $p['values']);
+                $out = $this->finalize($component, $this->renderHtml($component, $p['values']), $warnings);
                 $this->repository->storeRender($site, $cacheKey, $component->id, $out);
                 $rendered[$p['index']] = $out;
             } else {
@@ -93,6 +101,7 @@ final class ComponentRenderer
                     'props' => $p['values'],
                     'cacheKey' => $cacheKey,
                     'componentId' => $component->id,
+                    'component' => $component,
                 ];
             }
         }
@@ -102,7 +111,7 @@ final class ComponentRenderer
             $results = $this->renderReactBatch($site, $reactBatch);
             foreach ($reactBatch as $index => $req) {
                 if (isset($results[$index]['html'])) {
-                    $out = (string) $results[$index]['html'];
+                    $out = $this->finalize($req['component'], (string) $results[$index]['html'], $warnings);
                     $this->repository->storeRender($site, $req['cacheKey'], $req['componentId'], $out);
                     $rendered[$index] = $out;
                 } else {
@@ -117,7 +126,7 @@ final class ComponentRenderer
         $out = $html;
         $offset = 0;
         foreach ($placeholders as $p) {
-            $replacement = $this->stripActiveContent($rendered[$p['index']] ?? '', $warnings);
+            $replacement = $rendered[$p['index']] ?? '';
             $pos = strpos($out, $p['full'], $offset);
             if ($pos !== false) {
                 $out = substr_replace($out, $replacement, $pos, \strlen($p['full']));
@@ -126,6 +135,30 @@ final class ComponentRenderer
         }
 
         return ['html' => $out, 'css' => implode("\n", $cssParts), 'warnings' => $warnings];
+    }
+
+    /**
+     * The output contract, decided per component: a VERBATIM component ships
+     * as authored — scripts, iframes, handlers and all — wrapped in the same
+     * `<div data-fs-embed>` trusted-region marker verbatim content and file
+     * embeds use (PageAudit exempts it; the build's CSP scan sees its scripts
+     * and relaxes `_headers` so they actually run). Everything else keeps the
+     * zero-JS strip. Runs BEFORE the render cache stores, so the cached HTML
+     * is final either way — which is also why the verbatim flag is part of
+     * the cache key.
+     *
+     * @param list<string> $warnings
+     */
+    private function finalize(Component $component, string $html, array &$warnings): string
+    {
+        if (!$component->verbatim) {
+            return $this->stripActiveContent($html, $warnings);
+        }
+        if ($html === '' || preg_match('/^\s*<div\b[^>]*\bdata-fs-embed\b/i', $html) === 1) {
+            return $html; // already marked (idempotent, like ContentService::wrapVerbatim)
+        }
+
+        return '<div data-fs-embed>' . $html . '</div>';
     }
 
     /**

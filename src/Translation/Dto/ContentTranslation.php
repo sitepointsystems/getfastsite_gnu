@@ -18,6 +18,15 @@ final readonly class ContentTranslation
         public string $seoDescription,
         public string $sourceHash,
         public string $status,
+        public ?string $intro = null,
+        public ?string $tldr = null,
+        public ?string $conclusion = null,
+        /**
+         * Why the LAST attempt on this row failed, or null. Present on failed
+         * rows AND on still-live 'translated' rows whose refresh failed — the
+         * sync uses it to sort known-bad work to the back of a chunk.
+         */
+        public ?string $error = null,
     ) {
     }
 
@@ -38,6 +47,10 @@ final readonly class ContentTranslation
             seoDescription: (string) $row['seo_description'],
             sourceHash: (string) $row['source_hash'],
             status: (string) $row['status'],
+            intro: ($row['intro'] ?? null) !== null ? (string) $row['intro'] : null,
+            tldr: ($row['tldr'] ?? null) !== null ? (string) $row['tldr'] : null,
+            conclusion: ($row['conclusion'] ?? null) !== null ? (string) $row['conclusion'] : null,
+            error: ($row['error'] ?? null) !== null && (string) $row['error'] !== '' ? (string) $row['error'] : null,
         );
     }
 }

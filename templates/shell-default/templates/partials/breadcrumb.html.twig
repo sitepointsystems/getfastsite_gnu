@@ -1,0 +1,10 @@
+{# Visible breadcrumbs — the same trail the page's structured data carries. #}
+{% if page.breadcrumb is defined and page.breadcrumb|length > 1 %}
+<nav class="crumbs" aria-label="{{ t('breadcrumb') }}">
+  <ol>
+    {% for crumb in page.breadcrumb %}
+    <li>{% if crumb.url %}<a href="{{ crumb.url }}">{{ crumb.name }}</a>{% else %}<span aria-current="page">{{ crumb.name }}</span>{% endif %}</li>
+    {% endfor %}
+  </ol>
+</nav>
+{% endif %}

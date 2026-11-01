@@ -32,6 +32,7 @@ final class WebhooksApiHandler implements RequestHandlerInterface
         private readonly WebhookService $webhooks,
         private readonly WebhookMapperRegistry $mappers,
         private readonly AuditLogger $audit,
+        private readonly string $appUrl,
     ) {
     }
 
@@ -91,7 +92,7 @@ final class WebhooksApiHandler implements RequestHandlerInterface
 
         return ApiResponse::success([
             'id' => $result['id'],
-            'endpoint' => '/webhooks/' . $result['slug'],
+            'endpoint' => \Fastsite\Http\PublicUrl::base($request, $this->appUrl) . '/webhooks/' . $result['slug'],
             'secret' => $result['secret'],
         ], 201);
     }

@@ -58,6 +58,18 @@ final class FileRendererTest extends TestCase
                 return $this->byId[$id] ?? null;
             }
 
+            public function readyIdsOfKind(string $site, array $kinds): array
+            {
+                $out = [];
+                foreach ($this->byId as $id => $m) {
+                    if (\in_array($m->kind, $kinds, true) && $m->status === 'ready') {
+                        $out[] = (int) $id;
+                    }
+                }
+
+                return $out;
+            }
+
             public function findBySha(string $site, string $sha256): ?Media
             {
                 return null;
@@ -105,6 +117,21 @@ final class FileRendererTest extends TestCase
 
             public function update(string $site, int $id, array $fields): void
             {
+            }
+
+            public function unoptimizedImageIds(string $site): array
+            {
+                return [];
+            }
+
+            public function countUnoptimizedImages(string $site): int
+            {
+                return 0;
+            }
+
+            public function readyImageIds(string $site): array
+            {
+                return [];
             }
 
             public function delete(string $site, int $id): void

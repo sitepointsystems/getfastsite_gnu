@@ -8,6 +8,7 @@ use Fastsite\Backup\Storage\StorageClient;
 use Fastsite\Media\ImageOptimizer;
 use Fastsite\Shared\Clock\Clock;
 use Fastsite\Shared\Database\SiteDatabaseManager;
+use Fastsite\Shared\Queue\JobQueue;
 use Fastsite\Site\Repository\SiteRepository;
 use Predis\Client;
 use Symfony\Component\Process\Process;
@@ -15,7 +16,7 @@ use Symfony\Component\Process\Process;
 /**
  * Plain-English pipeline health check (bin/fastsite doctor). Every check
  * yields OK / WARN / FAIL with a verdict a human can act on; the CLI exits
- * non-zero when anything FAILs. Conzent AutoSeoDoctor pattern.
+ * non-zero when anything FAILs. Follows an earlier in-house doctor.
  */
 final class DoctorService
 {
@@ -26,6 +27,10 @@ final class DoctorService
         private readonly Clock $clock,
         private readonly StorageClient $storage,
         private readonly ImageOptimizer $optimizer,
+        private readonly JobQueue $jobQueue,
+        private readonly \Fastsite\Publish\Service\FtpPublisher $ftp,
+        private readonly \Fastsite\Form\Service\FormService $forms,
+        private readonly BuildInfoService $buildInfo,
         private readonly string $appSecret,
     ) {
     }
@@ -67,6 +72,15 @@ final class DoctorService
             ? self::ok('node', 'Node ' . trim($node->getOutput()) . ' available (component SSR).')
             : self::warn('node', 'Node not found — React component rendering (M8) will not work.');
 
+        // What is ACTUALLY deployed. A 200 from /healthz cannot tell a fresh
+        // container from an old one kept alive after a failed build, and the
+        // libraries an advisory names (libvips, aom, libheif, librsvg) live
+        // inside sharp's prebuilt binary where nothing else reports them.
+        $build = $this->buildInfo->info();
+        $checks[] = $build['sharp'] !== null
+            ? self::ok('build', $this->buildInfo->summary())
+            : self::warn('build', 'Could not read the image libraries: ' . ($build['sharp_error'] ?? 'unknown') . ' — image processing is probably broken, and a dependency bump cannot be verified from here.');
+
         $checks[] = $this->optimizer->isConfigured()
             ? self::ok('image-optimizer', 'Image optimization: ' . $this->optimizer->describe() . '.')
             : self::warn('image-optimizer', 'ShortPixel not configured — images optimized by sharp only (set SHORTPIXEL_API_KEY to enable).');
@@ -78,6 +92,19 @@ final class DoctorService
         $checks[] = \extension_loaded('zip')
             ? self::ok('php-zip', 'PHP zip extension loaded (shell snapshots + shell backups).')
             : self::fail('php-zip', 'PHP zip extension missing — ZipArchive is undefined, so shell snapshots and shell backups cannot run. Install ext-zip in the runtime image.');
+
+        // Which transfer protocols this build of libcurl actually speaks.
+        // SFTP needs libssh2/libssh compiled in, which not every distro's
+        // package includes — and the alternative to reporting it here is every
+        // publish on an ftp site failing with an opaque "unsupported protocol"
+        // that points at nothing. Reported, never assumed.
+        $protocols = \Fastsite\Publish\Service\CurlFtpTransport::supportedProtocols();
+        $transfer = array_values(array_intersect(['ftp', 'ftps', 'sftp'], $protocols));
+        $checks[] = match (true) {
+            $transfer === [] => self::warn('transfer-protocols', 'libcurl speaks none of ftp/ftps/sftp — sites publishing to their own host cannot upload at all.'),
+            \count($transfer) < 3 => self::warn('transfer-protocols', 'libcurl speaks ' . implode(', ', $transfer) . ' but NOT ' . implode(', ', array_diff(['ftp', 'ftps', 'sftp'], $transfer)) . ' — a site set to a missing protocol cannot publish.'),
+            default => self::ok('transfer-protocols', 'libcurl speaks ftp, ftps and sftp (publishing to a customer\'s own host).'),
+        };
 
         $checks = [...$checks, ...$this->jobChecks(), ...$this->backupChecks(), ...$this->siteChecks()];
 
@@ -158,10 +185,37 @@ final class DoctorService
             ? self::ok('jobs-stale', 'No stale running jobs.')
             : self::warn('jobs-stale', $stale . ' running job(s) with a stale heartbeat — the next sweep will reclaim them.');
 
-        $backlog = (int) $db->fetchOne("SELECT COUNT(*) FROM jobs WHERE status = 'pending'");
+        try {
+            $byQueue = $db->fetchAllKeyValue(
+                "SELECT queue, COUNT(*) FROM jobs WHERE status = 'pending' GROUP BY queue",
+            );
+        } catch (\Throwable) {
+            $byQueue = [];
+        }
+        $backlog = array_sum(array_map(intval(...), $byQueue));
+        $split = $byQueue === [] ? '' : ' (' . implode(', ', array_map(
+            static fn (string $q, $n): string => $q . ': ' . $n,
+            array_keys($byQueue),
+            array_values($byQueue),
+        )) . ')';
         $checks[] = $backlog < 50
-            ? self::ok('jobs-backlog', $backlog . ' pending job(s).')
-            : self::warn('jobs-backlog', $backlog . ' pending jobs — is the worker running?');
+            ? self::ok('jobs-backlog', $backlog . ' pending job(s)' . $split . '.')
+            : self::warn('jobs-backlog', $backlog . ' pending jobs' . $split . ' — are the workers keeping up?');
+
+        // A backlog with no live worker beacon on that lane means the lane's
+        // worker process is down — not just busy.
+        try {
+            foreach ($byQueue as $queue => $count) {
+                if ((int) $count > 0 && !$this->jobQueue->laneHasWorker((string) $queue)) {
+                    $checks[] = self::warn(
+                        'workers-alive',
+                        sprintf('%d pending job(s) on "%s" but no worker has beaconed in 90s — is its queue:work process running?', (int) $count, (string) $queue),
+                    );
+                }
+            }
+        } catch (\Throwable $e) {
+            $checks[] = self::warn('workers-alive', 'Could not check worker beacons: ' . $e->getMessage());
+        }
 
         return $checks;
     }
@@ -194,8 +248,59 @@ final class DoctorService
                 } catch (\Throwable $e) {
                     $checks[] = self::warn($site->handle . '/git', 'Remote probe failed: ' . $e->getMessage());
                 }
-            } else {
+            } elseif ($site->serveMode === 'git') {
                 $checks[] = self::warn($site->handle . '/git', 'No GitHub repo configured — publishes stay local.');
+            }
+
+            // Only ftp sites have a target worth probing, and a probe opens a
+            // real connection — never do that for a site that does not publish
+            // this way. WARN, never FAIL: an unreachable customer host is an
+            // operational problem to fix, not a broken engine.
+            if ($site->serveMode === 'ftp') {
+                try {
+                    $probe = $this->ftp->test($site);
+                    $checks[] = $probe['ok']
+                        ? self::ok($site->handle . '/ftp', $probe['note'])
+                        : self::warn($site->handle . '/ftp', 'Cannot publish to the site\'s own host — ' . $probe['note']);
+                } catch (\Throwable $e) {
+                    $checks[] = self::warn($site->handle . '/ftp', 'Upload target probe failed: ' . $e->getMessage());
+                }
+            }
+
+            // Forms. Only reported when the site actually HAS one — a site with
+            // no forms has nothing to say about mail. The check is deliberately
+            // about undelivered submissions rather than about SMTP being blank:
+            // a form quietly collecting leads that nobody is notified about is
+            // the expensive failure here, and it looks perfectly healthy from
+            // every other angle. Never a probe — that would open a connection
+            // to a customer's mail server on every doctor run.
+            try {
+                $forms = $this->forms->list($site->handle);
+                if ($forms !== []) {
+                    $counts = $this->forms->counts($site->handle);
+                    $failed = array_sum(array_column($counts, 'failed'));
+                    $pending = array_sum(array_column($counts, 'pending'));
+
+                    if (!$site->smtpConfigured()) {
+                        $checks[] = self::warn(
+                            $site->handle . '/forms',
+                            \count($forms) . ' form(s) but no SMTP configured — submissions are stored, nobody is emailed.',
+                        );
+                    } elseif ($failed > 0) {
+                        $checks[] = self::warn(
+                            $site->handle . '/forms',
+                            $failed . ' submission(s) failed to send — check the Forms screen, fix the mail settings, then Retry failed sends.',
+                        );
+                    } else {
+                        $checks[] = self::ok(
+                            $site->handle . '/forms',
+                            \count($forms) . ' form(s) via ' . $site->smtpHost
+                                . ($pending > 0 ? ', ' . $pending . ' queued' : '') . '.',
+                        );
+                    }
+                }
+            } catch (\Throwable $e) {
+                $checks[] = self::warn($site->handle . '/forms', 'Form check failed: ' . $e->getMessage());
             }
 
             try {

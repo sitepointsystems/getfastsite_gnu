@@ -101,6 +101,17 @@ final class FactCheckService
             return ['report' => $stored, 'body' => $bodyHtml, 'changed' => false, 'corrected' => 0];
         }
 
+        // NEVER rewrite trusted content. The corrector is a model asked to
+        // "change only the wrong facts and preserve all markup" — on a
+        // verbatim body (interactive widgets, <template>/<button>/<input>,
+        // framework attributes) that promise does not hold, and the rewrite
+        // silently replaced a working pricing calculator with prose. Report
+        // the claims; a human decides. Sanitized bodies are plain prose the
+        // corrector can safely touch, so they keep auto-correction.
+        if (!$site->sanitizeContent || ContentService::isVerbatim($bodyHtml)) {
+            return ['report' => $stored, 'body' => $bodyHtml, 'changed' => false, 'corrected' => 0];
+        }
+
         $corrected = $this->ai->correctorForSite($site)->rewrite($bodyHtml, $title, $fixable);
         $changed = trim($corrected) !== trim($bodyHtml) && trim($corrected) !== '';
 

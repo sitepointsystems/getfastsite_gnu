@@ -40,6 +40,7 @@ final class AccountActionHandler implements RequestHandlerInterface
         private readonly Client $redis,
         private readonly GithubCredentialService $githubCreds,
         private readonly \Fastsite\Ai\AiCredentialService $aiCreds,
+        private readonly \Fastsite\Identity\Service\AvatarService $avatars,
     ) {
     }
 
@@ -64,6 +65,20 @@ final class AccountActionHandler implements RequestHandlerInterface
                     $this->remember->revokeAll($user['id']);
 
                     return $this->dash->redirect('/account', 'Password changed. Other sessions signed out.');
+
+                case 'avatar-upload':
+                    $upload = $request->getUploadedFiles()['avatar'] ?? null;
+                    if (!$upload instanceof \Psr\Http\Message\UploadedFileInterface || $upload->getError() !== UPLOAD_ERR_OK) {
+                        return $this->dash->redirect('/account', '', 'Pick an image file first.');
+                    }
+                    $this->avatars->save($user['id'], (string) $upload->getStream());
+
+                    return $this->dash->redirect('/account', 'Profile image updated.');
+
+                case 'avatar-remove':
+                    $this->avatars->remove($user['id']);
+
+                    return $this->dash->redirect('/account', 'Profile image removed.');
 
                 case 'totp-setup':
                     $seed = $this->totp->generateSeed();
@@ -104,10 +119,7 @@ final class AccountActionHandler implements RequestHandlerInterface
                 case 'key-create':
                     // Scopes now arrive as a checkbox array (scopes[]); still
                     // accept a legacy comma string for the API/older forms.
-                    $rawScopes = $body['scopes'] ?? '';
-                    $scopes = \is_array($rawScopes)
-                        ? array_values(array_filter(array_map(static fn ($s): string => trim((string) $s), $rawScopes)))
-                        : array_values(array_filter(array_map('trim', explode(',', (string) $rawScopes))));
+                    $scopes = self::submittedScopes($body['scopes'] ?? '');
                     $sites = array_values(array_filter(array_map('trim', explode(',', (string) ($body['sites'] ?? '*')))));
                     // A dashboard user can never mint a key more powerful than
                     // themselves: non-admins may not grant `admin`, may not use
@@ -120,6 +132,19 @@ final class AccountActionHandler implements RequestHandlerInterface
                     return $this->dash->render($request, 'account.html.twig', $this->screen->context($request, [
                         'new_key' => $key['token'],
                     ]));
+
+                case 'key-scopes':
+                    // Edit in place: the token is untouched, so nothing holding
+                    // this key has to be reconfigured. Same grant gate as
+                    // key-create — otherwise editing would be the way around
+                    // the rule creation enforces.
+                    $keyId = (int) ($body['key_id'] ?? 0);
+                    $this->assertOwnKey($user['id'], $keyId);
+                    $scopes = self::submittedScopes($body['scopes'] ?? '');
+                    $this->assertMayGrant($user, $scopes);
+                    $this->keys->updateScopes($keyId, $scopes);
+
+                    return $this->dash->redirect('/account', 'Scopes updated, and live immediately. The key itself is unchanged.');
 
                 case 'key-revoke':
                     $keyId = (int) ($body['key_id'] ?? 0);
@@ -154,6 +179,7 @@ final class AccountActionHandler implements RequestHandlerInterface
                         (string) ($body['model'] ?? ''),
                         (string) ($body['factcheck_model'] ?? ''),
                         (string) ($body['research_model'] ?? ''),
+                        (string) ($body['translate_model'] ?? ''),
                     );
 
                     return $this->dash->redirect('/account', 'AI key saved. Select it on a site\'s settings to power translation + fact-checking + research.');
@@ -167,6 +193,7 @@ final class AccountActionHandler implements RequestHandlerInterface
                         (string) ($body['model'] ?? ''),
                         (string) ($body['factcheck_model'] ?? ''),
                         (string) ($body['research_model'] ?? ''),
+                        (string) ($body['translate_model'] ?? ''),
                     );
 
                     return $this->dash->redirect('/account', 'AI key updated.');
@@ -216,12 +243,10 @@ final class AccountActionHandler implements RequestHandlerInterface
      */
     private function boundKeyRequest(ServerRequestInterface $request, array $user, array $scopes, array $sites): array
     {
+        $this->assertMayGrant($user, $scopes);
+
         if (($user['role'] ?? '') === 'admin') {
             return [$scopes, $sites === [] ? ['*'] : $sites];
-        }
-
-        if (\in_array('admin', $scopes, true)) {
-            throw new \RuntimeException('Only administrators can create admin-scoped keys.');
         }
 
         $allowed = array_map(static fn ($s): string => $s->handle, $this->dash->sitesFor($user));
@@ -238,6 +263,36 @@ final class AccountActionHandler implements RequestHandlerInterface
         }
 
         return [$scopes, $clamped];
+    }
+
+    /**
+     * THE one answer to "may this user put these scopes on a key". Creation and
+     * the scope editor both come through here; a second copy of this rule is
+     * how editing quietly becomes a privilege escalation.
+     *
+     * @param array<string, mixed> $user
+     * @param list<string> $scopes
+     */
+    private function assertMayGrant(array $user, array $scopes): void
+    {
+        if (($user['role'] ?? '') !== 'admin' && \in_array('admin', $scopes, true)) {
+            throw new \RuntimeException('Only administrators can grant the admin scope.');
+        }
+    }
+
+    /**
+     * The checkbox array (scopes[]) the forms post; a comma string is still
+     * accepted for older callers.
+     *
+     * @return list<string>
+     */
+    private static function submittedScopes(mixed $raw): array
+    {
+        if (\is_array($raw)) {
+            return array_values(array_filter(array_map(static fn ($s): string => trim((string) $s), $raw)));
+        }
+
+        return array_values(array_filter(array_map('trim', explode(',', (string) $raw))));
     }
 
     private function assertOwnKey(int $userId, int $keyId): void

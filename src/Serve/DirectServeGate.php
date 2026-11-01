@@ -5,12 +5,13 @@ declare(strict_types=1);
 namespace Fastsite\Serve;
 
 use Fastsite\Shared\Database\SiteDatabaseManager;
+use Fastsite\Shared\Http\BuildHeaders;
 use Fastsite\Shared\Http\MimeTypes;
 use Fastsite\Site\Dto\Site;
 use Fastsite\Site\Repository\SiteRepository;
 use Fastsite\Site\Service\RedirectService;
-use Nyholm\Psr7\Response;
-use Nyholm\Psr7\Stream;
+use GuzzleHttp\Psr7\Response;
+use GuzzleHttp\Psr7\Utils;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 
@@ -24,22 +25,22 @@ use Psr\Http\Message\ServerRequestInterface;
  * Honors the build's own contract files: response headers come from the
  * generated _headers (so the scripts-mode CSP relaxation applies unchanged),
  * redirects come from the redirects table (same source _redirects is written
- * from), and a miss serves 404.html AND records the path in missing_paths —
+ * from) — including 410 rules, which a CDN deployment can only degrade to a
+ * 404 — and a miss serves 404.html AND records the path in missing_paths,
  * feeding the dashboard's "Suggested redirects" card without the JS beacon a
  * CDN deployment needs.
  *
- * Also owns the www→apex 301 here: in direct mode there is no Cloudflare zone
- * rule in front to do it.
+ * Also owns the host-level 301 here: in direct mode there is no Cloudflare
+ * zone rule in front, so this is what sends visitors to the site's canonical
+ * host — www→apex, or apex→www when the operator chose www.
  */
 final class DirectServeGate
 {
-    /** @var array<string, array{int, list<array{string, list<array{string, string}>}>}> _headers parse cache: path => [mtime, rules] */
-    private array $headerRules = [];
-
     public function __construct(
         private readonly SiteRepository $sites,
         private readonly SiteDatabaseManager $databases,
         private readonly RedirectService $redirects,
+        private readonly BuildHeaders $buildHeaders,
         private readonly string $appUrl,
     ) {
     }
@@ -58,27 +59,39 @@ final class DirectServeGate
             return null;
         }
 
-        // www.example.com → 301 to the apex when the apex is a direct site.
-        if (str_starts_with($host, 'www.')) {
-            $apex = substr($host, 4);
-            $site = $this->sites->findByPrimaryDomain($apex);
-            if ($site !== null && $site->serveMode === 'direct') {
-                return new Response(301, [
-                    'Location' => $this->scheme($request) . '://' . $apex . $this->pathWithQuery($request),
-                    'Cache-Control' => 'no-store',
-                ]);
-            }
-
-            return null;
-        }
-
-        $site = $this->sites->findByPrimaryDomain($host);
+        // Both host forms resolve to the same site row (primary_domain is the
+        // apex); which one visitors END on is the site's canonical_host.
+        $apex = str_starts_with($host, 'www.') ? substr($host, 4) : $host;
+        $site = $this->sites->findByPrimaryDomain($apex);
         if ($site === null || $site->serveMode !== 'direct') {
             return null;
         }
 
+        $canonical = strtolower($site->canonicalDomain());
+        if ($canonical !== '' && $host !== $canonical) {
+            return new Response(301, [
+                'Location' => $this->scheme($request) . '://' . $canonical . $this->pathWithQuery($request),
+                'Cache-Control' => 'no-store',
+            ]);
+        }
+
         $method = strtoupper($request->getMethod());
         if ($method !== 'GET' && $method !== 'HEAD') {
+            // A redirect rule still answers a POST: 307/308 preserve method and
+            // body, so a beacon aimed at a moved endpoint reaches its new home
+            // instead of dying on a 405. Gone rules and misses keep the 405.
+            $rule = $this->resolveRule(
+                $site,
+                rawurldecode($request->getUri()->getPath()),
+                $request->getUri()->getQuery(),
+            );
+            if ($rule !== null && $rule['status'] !== RedirectService::GONE) {
+                return new Response($rule['status'], [
+                    'Location' => $rule['to'],
+                    'Cache-Control' => 'no-store',
+                ]);
+            }
+
             return new Response(405, ['Allow' => 'GET, HEAD', 'Content-Type' => 'text/plain; charset=utf-8'], "Method not allowed.\n");
         }
 
@@ -120,9 +133,9 @@ final class DirectServeGate
         }
 
         if (!$contained || !is_file((string) $target)) {
-            $redirect = $this->matchRedirect($site, $path);
-            if ($redirect !== null) {
-                return $redirect;
+            $rule = $this->matchRedirect($site, $path, $request->getUri()->getQuery(), $rootReal, $headOnly);
+            if ($rule !== null) {
+                return $rule;
             }
 
             return $this->notFound($site, $request, $rootReal, $headOnly);
@@ -153,10 +166,96 @@ final class DirectServeGate
 
         // A stream body — Application::emit reads it in chunks, so a large
         // video never materializes as one PHP string.
-        return new Response(200, $headers, Stream::create($fh));
+        return new Response(200, $headers, Utils::streamFor($fh));
     }
 
-    private function matchRedirect(Site $site, string $path): ?ResponseInterface
+    /**
+     * A rule from the redirects table: a 3xx to another path, or 410 Gone —
+     * the one place in the stack where a 410 is actually answerable, since
+     * a CDN's _redirects file cannot express it.
+     */
+    private function matchRedirect(Site $site, string $path, string $query, string $rootReal, bool $headOnly): ?ResponseInterface
+    {
+        $rule = $this->resolveRule($site, $path, $query);
+        if ($rule === null) {
+            return null;
+        }
+
+        if ($rule['status'] !== RedirectService::GONE) {
+            return new Response($rule['status'], [
+                'Location' => $rule['to'],
+                'Cache-Control' => 'no-store',
+            ]);
+        }
+
+        // Gone: no Location, and the hit is INTENTIONAL — it is not
+        // recorded in missing_paths, or the dashboard would keep asking
+        // the operator to fix a URL they deliberately retired.
+        //
+        // A site with a 410 error page gets ITS page; otherwise the 404 is
+        // still the closest body the shell provides for "not here". Before
+        // error pages existed, a 410 always served the 404's bytes — `<h1>404`
+        // and all — under a 410 status, which told the visitor the opposite of
+        // what the status said.
+        [$body, $isHtml] = $this->errorBody($rootReal, $path, 410);
+        $headers = $this->headersFor($rootReal, $path);
+        $headers['Content-Type'] = $isHtml ? 'text/html; charset=utf-8' : 'text/plain; charset=utf-8';
+        $headers['Cache-Control'] = 'no-store';
+
+        return new Response(410, $headers, $headOnly ? '' : ($body ?? "Gone.\n"));
+    }
+
+    /**
+     * The best body in the built tree for one error status on one request path.
+     *
+     * Two fallback axes, in this order:
+     *
+     * 1. STATUS: the requested code's own page, then 404's. A site that never
+     *    made a 410 page still gets something better than a bare status line.
+     * 2. LOCALE: the page under the request's own locale prefix, then the
+     *    root one. `notFound()` used to read only the build-root `404.html`,
+     *    so every miss under `/dk/` served the ENGLISH 404 even though the
+     *    build had been emitting `dk/404.html` all along.
+     *
+     * @return array{0: ?string, 1: bool} body (null = nothing found), is-HTML
+     */
+    private function errorBody(string $rootReal, string $path, int $status): array
+    {
+        // First path segment, when it looks like a locale code. Not validated
+        // against the site's locale list on purpose: the file either exists in
+        // the tree or it does not, and `is_file` is the cheaper, truer check.
+        $prefix = '';
+        if (preg_match('#^/([a-z]{2}(?:-[a-z0-9]{2,8})?)(?:/|$)#i', $path, $m) === 1) {
+            $prefix = strtolower($m[1]) . \DIRECTORY_SEPARATOR;
+        }
+
+        $dirs = $prefix === '' ? [''] : [$prefix, ''];
+        $codes = $status === 404 ? [404] : [$status, 404];
+
+        foreach ($codes as $code) {
+            foreach ($dirs as $dir) {
+                $file = $rootReal . \DIRECTORY_SEPARATOR . $dir . $code . '.html';
+                if (is_file($file)) {
+                    return [(string) file_get_contents($file), true];
+                }
+            }
+        }
+
+        return [null, false];
+    }
+
+    /**
+     * The rule answering `$path`, wildcards included — direct mode must honor
+     * the same `/old/*` → `/new/:splat` rules the CDN's `_redirects` file
+     * would. An exact rule always beats a wildcard regardless of row order;
+     * among wildcards the longest prefix wins. `:splat` in the target is the
+     * matched remainder, and the request's query string is carried over on a
+     * wildcard match (the moved asset keeps its cache-busting params). For a
+     * 410 rule `to` is empty, as stored.
+     *
+     * @return array{to: string, status: int}|null
+     */
+    private function resolveRule(Site $site, string $path, string $query): ?array
     {
         try {
             $rows = $this->redirects->list($site->handle);
@@ -172,16 +271,42 @@ final class DirectServeGate
             $candidates = ['/'];
         }
 
+        $best = null;
+        $bestPrefixLen = -1;
         foreach ($rows as $row) {
-            if (\in_array((string) $row['from_path'], $candidates, true)) {
-                return new Response((int) $row['status'], [
-                    'Location' => (string) $row['to_path'],
-                    'Cache-Control' => 'no-store',
-                ]);
+            $from = (string) $row['from_path'];
+            $status = (int) $row['status'];
+
+            if (\in_array($from, $candidates, true)) {
+                return ['to' => (string) $row['to_path'], 'status' => $status];
             }
+
+            if (!str_ends_with($from, '/*')) {
+                continue;
+            }
+            $prefix = substr($from, 0, -1); // "/app/*" -> "/app/"
+            $base = rtrim($prefix, '/');    // "/app/"  -> "/app"
+            if (!str_starts_with($normalized, $prefix) && $normalized !== $base) {
+                continue;
+            }
+            if (\strlen($prefix) <= $bestPrefixLen) {
+                continue;
+            }
+
+            $to = (string) $row['to_path'];
+            if ($status !== RedirectService::GONE) {
+                $splat = $normalized === $base ? '' : substr($normalized, \strlen($prefix));
+                $to = str_replace(':splat', $splat, $to);
+                if ($query !== '') {
+                    $to .= (str_contains($to, '?') ? '&' : '?') . $query;
+                }
+            }
+
+            $best = ['to' => $to, 'status' => $status];
+            $bestPrefixLen = \strlen($prefix);
         }
 
-        return null;
+        return $best;
     }
 
     private function notFound(Site $site, ServerRequestInterface $request, string $rootReal, bool $headOnly): ResponseInterface
@@ -199,80 +324,27 @@ final class DirectServeGate
         }
 
         $headers = $this->headersFor($rootReal, $request->getUri()->getPath());
-        $headers['Content-Type'] = 'text/html; charset=utf-8';
         $headers['Cache-Control'] = 'no-store';
 
-        $page = $rootReal . \DIRECTORY_SEPARATOR . '404.html';
-        $body = is_file($page) ? (string) file_get_contents($page) : "Not found.\n";
-        if (!is_file($page)) {
-            $headers['Content-Type'] = 'text/plain; charset=utf-8';
-        }
+        // Locale-aware: a miss under /dk/ serves dk/404.html when the build
+        // emitted one, falling back to the root page. See errorBody().
+        [$body, $isHtml] = $this->errorBody($rootReal, $request->getUri()->getPath(), 404);
+        $headers['Content-Type'] = $isHtml ? 'text/html; charset=utf-8' : 'text/plain; charset=utf-8';
 
-        return new Response(404, $headers, $headOnly ? '' : $body);
+        return new Response(404, $headers, $headOnly ? '' : ($body ?? "Not found.\n"));
     }
 
     /**
      * Response headers from the build's own _headers file, so direct serving
      * honors exactly what the CDN would (security headers, immutable caching,
-     * the scripts-mode CSP). Format (engine-generated, BuildService::headers):
-     * a `/pattern` line opens a rule, indented `Name: value` lines attach to
-     * it; `*` is a wildcard. All matching rules apply; later wins per name.
+     * the scripts-mode CSP). In direct mode the site is at the domain root, so
+     * the request path IS the in-tree path.
      *
      * @return array<string, string>
      */
     private function headersFor(string $rootReal, string $requestPath): array
     {
-        $file = $rootReal . \DIRECTORY_SEPARATOR . '_headers';
-        if (!is_file($file)) {
-            return [];
-        }
-
-        $mtime = (int) filemtime($file);
-        $cached = $this->headerRules[$file] ?? null;
-        if ($cached === null || $cached[0] !== $mtime) {
-            $this->headerRules = [$file => [$mtime, $this->parseHeaderRules((string) file_get_contents($file))]];
-            $cached = $this->headerRules[$file];
-        }
-
-        $out = [];
-        foreach ($cached[1] as [$pattern, $pairs]) {
-            $regex = '#^' . str_replace('\*', '.*', preg_quote($pattern, '#')) . '$#';
-            if (preg_match($regex, $requestPath) === 1) {
-                foreach ($pairs as [$name, $value]) {
-                    $out[$name] = $value;
-                }
-            }
-        }
-
-        return $out;
-    }
-
-    /**
-     * @return list<array{string, list<array{string, string}>}>
-     */
-    private function parseHeaderRules(string $content): array
-    {
-        $rules = [];
-        $current = null;
-        foreach (preg_split('/\r\n|\n/', $content) ?: [] as $line) {
-            if ($line !== '' && $line[0] === '/') {
-                if ($current !== null) {
-                    $rules[] = $current;
-                }
-                $current = [trim($line), []];
-                continue;
-            }
-            $trimmed = trim($line);
-            if ($current !== null && $trimmed !== '' && str_contains($trimmed, ':')) {
-                [$name, $value] = explode(':', $trimmed, 2);
-                $current[1][] = [trim($name), trim($value)];
-            }
-        }
-        if ($current !== null) {
-            $rules[] = $current;
-        }
-
-        return $rules;
+        return $this->buildHeaders->for($rootReal, $requestPath);
     }
 
     private function scheme(ServerRequestInterface $request): string

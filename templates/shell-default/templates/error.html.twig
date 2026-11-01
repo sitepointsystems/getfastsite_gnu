@@ -1,0 +1,29 @@
+{% extends 'base.html.twig' %}
+
+{#
+  The generic error page: every configured status that has no `{code}.html.twig`
+  of its own renders here, with `page.error_status` naming which one.
+
+  Resolution order in the build is `{code}.html.twig` → `error.html.twig` →
+  `404.html.twig`, so a shell can style one code specially, handle the rest
+  here, or ship neither and have every code reuse its 404.
+
+  `content` is always set in practice — a non-404 error page only exists
+  because someone created the row — but it is guarded anyway: the shell
+  dry-run renders this template with no row to prove it cannot throw at
+  publish time.
+#}
+{% set locale_home = site.locale == site.primary_locale ? '/' : '/' ~ site.locale ~ '/' %}
+
+{% block main %}
+<section class="section">
+  <div class="wrap reading center">
+    <h1>{{ page.error_status|default('Error') }}</h1>
+    {% if content %}
+      {{ content.body_html|raw }}
+    {% else %}
+      <p><a class="button" href="{{ locale_home }}">{{ t('back_home') }}</a></p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

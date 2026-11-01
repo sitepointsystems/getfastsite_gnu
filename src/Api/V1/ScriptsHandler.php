@@ -72,6 +72,7 @@ final class ScriptsHandler implements RequestHandlerInterface
      */
     private static function toArray(\Fastsite\Site\Dto\SiteScript $s): array
     {
-        return ['id' => $s->id, 'label' => $s->label, 'location' => $s->location, 'strategy' => $s->strategy, 'priority' => $s->priority, 'code' => $s->code, 'enabled' => $s->enabled];
+        return ['id' => $s->id, 'label' => $s->label, 'location' => $s->location, 'strategy' => $s->strategy, 'priority' => $s->priority, 'code' => $s->code, 'enabled' => $s->enabled,
+            'target' => $s->target, 'include_slugs' => $s->includeSlugs, 'exclude_slugs' => $s->excludeSlugs];
     }
 }

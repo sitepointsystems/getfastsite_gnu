@@ -53,6 +53,31 @@ final class WebhookService
     }
 
     /**
+     * Replaces the integration secret with a caller-provided value — needed
+     * when the SENDER owns the credential: AutoSEO signs with its own
+     * endpoint token (aseo_wh_…), so the stored secret must equal it.
+     */
+    public function setSecret(int $id, string $siteHandle, string $secret): void
+    {
+        $secret = trim($secret);
+        if (\strlen($secret) < 16) {
+            throw new \InvalidArgumentException('Secret must be at least 16 characters.');
+        }
+        $enc = $this->cipher->encrypt($secret);
+        if ($enc === null) {
+            throw new \RuntimeException('APP_SECRET is not configured — cannot encrypt the webhook secret.');
+        }
+
+        $count = $this->databases->engine()->executeStatement(
+            'UPDATE webhook_integrations SET secret_enc = ?, updated_at = ? WHERE id = ? AND site_handle = ?',
+            [$enc, $this->clock->iso(), $id, $siteHandle],
+        );
+        if ($count === 0) {
+            throw new \InvalidArgumentException('Webhook integration not found.');
+        }
+    }
+
+    /**
      * A site's integrations with recent delivery counts (no secret).
      *
      * @return list<array<string, mixed>>

@@ -23,6 +23,8 @@ final class ComponentUpsertHandler implements RequestHandlerInterface
     public function __construct(
         private readonly SiteRepository $sites,
         private readonly ComponentService $components,
+        private readonly \Fastsite\Component\Service\ComponentHookService $hooks,
+        private readonly \Fastsite\Build\Service\PublishTrigger $publish,
         private readonly AuditLogger $audit,
     ) {
     }
@@ -47,11 +49,23 @@ final class ComponentUpsertHandler implements RequestHandlerInterface
 
         $this->audit->log($access, 'component.upsert', $handle, 'component:' . $component->handle, ['type' => $component->type], ApiHelpers::clientIp($request));
 
+        // A referenced component appears on pages whose content rows never
+        // move — hook-injected pages have no row at all, and an embedded
+        // placeholder doesn't change when the component behind it does —
+        // republish now or the live site keeps rendering the old build.
+        $referenced = $this->hooks->referencing($handle, $component->handle)
+            || $this->components->referencedByContent($site, $component->handle);
+        if ($referenced) {
+            $this->publish->trigger($site, 'publish: referenced component changed (api)', 'api');
+        }
+
         return ApiResponse::json(['success' => true, 'data' => [
             'handle' => $component->handle,
             'type' => $component->type,
             'status' => $component->status,
+            'verbatim' => $component->verbatim,
             'warnings' => $component->warnings,
+            'republished' => $referenced,
         ]], 201);
     }
 }

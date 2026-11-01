@@ -7,7 +7,7 @@ namespace Fastsite\Dashboard\Handler;
 use Fastsite\Dashboard\Dash;
 use Fastsite\Media\Repository\MediaRepository;
 use Fastsite\Shared\Database\SiteDatabaseManager;
-use Nyholm\Psr7\Response;
+use GuzzleHttp\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
@@ -44,6 +44,23 @@ final class MediaServeHandler implements RequestHandlerInterface
             return new Response(404);
         }
 
+        // ?original=1 serves the stored ORIGINAL rather than a variant.
+        //
+        // The crop editor needs this and cannot use a variant: variants have
+        // the stored crop already applied, so drawing a rect on one would
+        // measure a fraction of the CROPPED image while the value stored is a
+        // fraction of the original — every re-crop would compound. It is the
+        // full-size file, which is why nothing but the editor asks for it.
+        if ((string) ($request->getQueryParams()['original'] ?? '') === '1' && $item->kind === 'image') {
+            $path = $this->contained($site->handle, $item->diskPath);
+
+            return $path === null ? new Response(404) : new Response(200, [
+                'Content-Type' => $item->mime,
+                'Cache-Control' => 'private, max-age=60',
+                'X-Robots-Tag' => 'noindex',
+            ], (string) file_get_contents($path));
+        }
+
         // Smallest responsive variant, format preference webp→jpg→png→avif.
         $best = null;
         foreach ($item->variants as $variant) {
@@ -62,10 +79,8 @@ final class MediaServeHandler implements RequestHandlerInterface
         // "media/variants/12/hero-480.webp"), so resolve it against the site
         // path — realpath($best->diskPath) alone would resolve against the
         // process CWD and always fail (→ 404 → the 🖼 placeholder).
-        $sitePath = $this->databases->sitePath($site->handle);
-        $root = realpath($sitePath . '/media');
-        $target = realpath($sitePath . '/' . ltrim($best->diskPath, '/'));
-        if ($root === false || $target === false || !str_starts_with($target, $root . \DIRECTORY_SEPARATOR) || !is_file($target)) {
+        $target = $this->contained($site->handle, $best->diskPath);
+        if ($target === null) {
             return new Response(404);
         }
 
@@ -74,5 +89,26 @@ final class MediaServeHandler implements RequestHandlerInterface
             'Cache-Control' => 'private, max-age=300',
             'X-Robots-Tag' => 'noindex',
         ], (string) file_get_contents($target));
+    }
+
+    /**
+     * Resolve a stored relative disk path, refusing anything that escapes the
+     * site's own media directory.
+     *
+     * Variant and original disk_paths are stored RELATIVE to the site dir
+     * (e.g. "media/variants/12/hero-480.webp"), so realpath() on the stored
+     * value alone would resolve against the process CWD and always fail —
+     * which presented as a 404 and the 🖼 placeholder.
+     */
+    private function contained(string $handle, string $relative): ?string
+    {
+        $sitePath = $this->databases->sitePath($handle);
+        $root = realpath($sitePath . '/media');
+        $target = realpath(str_starts_with($relative, $sitePath) ? $relative : $sitePath . '/' . ltrim($relative, '/'));
+        if ($root === false || $target === false || !str_starts_with($target, $root . \DIRECTORY_SEPARATOR) || !is_file($target)) {
+            return null;
+        }
+
+        return $target;
     }
 }

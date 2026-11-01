@@ -11,7 +11,7 @@ use Fastsite\Shared\Clock\Clock;
  * Header format:  X-Fastsite-Signature: t=<unix>,v1=<hex hmac-sha256>
  * The signed payload is "<t>.<raw body>", HMAC'd with the integration
  * secret. A ±300s window bounds replay; hash_equals is constant-time.
- * (Conzent AutoSeo SignatureVerifier pattern.)
+ * (Ported from an earlier in-house signature verifier.)
  */
 final class SignatureVerifier
 {
@@ -55,6 +55,45 @@ final class SignatureVerifier
         $signature = hash_hmac('sha256', $timestamp . '.' . $rawBody, $secret);
 
         return sprintf('t=%d,v1=%s', $timestamp, $signature);
+    }
+
+    /**
+     * AutoSEO-style verification: the signature is the plain hex HMAC-SHA256
+     * of the raw body (optionally "sha256="-prefixed), keyed with the shared
+     * secret. No timestamp — replay is bounded by the delivery-id dedupe
+     * instead of a time window (the GitHub-webhook model).
+     */
+    public function verifyPlain(string $signatureHeader, string $rawBody, string $secret): bool
+    {
+        if ($secret === '') {
+            return false;
+        }
+
+        $provided = trim($signatureHeader);
+        if (str_starts_with($provided, 'sha256=')) {
+            $provided = substr($provided, 7);
+        }
+        if (preg_match('/^[0-9a-f]{64}$/i', $provided) !== 1) {
+            return false;
+        }
+
+        return hash_equals(hash_hmac('sha256', $rawBody, $secret), strtolower($provided));
+    }
+
+    /**
+     * `Authorization: Bearer <token>` where the token IS the shared secret —
+     * AutoSEO sends its endpoint token as both the bearer and the HMAC key.
+     */
+    public function verifyBearer(string $authorizationHeader, string $secret): bool
+    {
+        if ($secret === '') {
+            return false;
+        }
+        if (preg_match('/^Bearer\s+(.+)$/i', trim($authorizationHeader), $m) !== 1) {
+            return false;
+        }
+
+        return hash_equals($secret, trim($m[1]));
     }
 
     /**

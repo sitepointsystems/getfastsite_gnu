@@ -1,0 +1,92 @@
+    {% if can_manage %}
+    <div class="card" style="border-color:{{ site.smtpHost ? 'var(--border)' : 'rgba(245,158,11,.45)' }}">
+      <details {{ site.smtpHost ? '' : 'open' }}>
+        <summary style="font-weight:600;font-size:1.05rem">
+          Email (SMTP)
+          {% if site.smtpHost %}
+            <span class="mut" style="font-weight:400">— {{ site.smtpHost }}</span>
+          {% else %}
+            <span class="badge warn" style="font-weight:400">not configured</span>
+          {% endif %}
+        </summary>
+        <p class="mut" style="font-size:.86rem;margin:.6rem 0 .8rem;line-height:1.6">
+          A published site is static, so it cannot send anything itself. A form on it posts here and this server relays the message through
+          <strong>your own mail account</strong> — so notifications leave your domain, keeping your SPF and DKIM alignment, and no lead
+          ever rides on someone else's sending reputation. <strong>Until this is filled in, forms still collect and store every submission,
+          but nobody is notified.</strong>
+        </p>
+        <form method="post" action="/sites/{{ site.handle }}/settings/action" class="stack">
+          <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="tab" value="{{ tab }}">
+          <div class="row">
+            <div>
+              <label>Host</label>
+              <input type="text" name="smtp_host" value="{{ site.smtpHost }}" placeholder="smtp.example.com" autocomplete="off">
+            </div>
+            <div class="tight">
+              <label>Encryption</label>
+              <select name="smtp_encryption">
+                <option value="starttls" {{ site.smtpEncryption == 'starttls' ? 'selected' }}>STARTTLS (587)</option>
+                <option value="tls" {{ site.smtpEncryption == 'tls' ? 'selected' }}>TLS (465)</option>
+                <option value="none" {{ site.smtpEncryption == 'none' ? 'selected' }}>None (25)</option>
+              </select>
+            </div>
+            <div class="tight">
+              <label>Port <span class="mut">(0 = default)</span></label>
+              <input type="number" name="smtp_port" value="{{ site.smtpPort }}" min="0" max="65535" size="5">
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label>Username</label>
+              <input type="text" name="smtp_username" value="{{ site.smtpUsername }}" autocomplete="off">
+            </div>
+            <div>
+              <label>Password</label>
+              <input type="password" name="smtp_password" autocomplete="new-password"
+                     placeholder="{{ site.smtpPasswordEnc ? '••••••••  (saved — leave blank to reuse)' : 'mailbox or app password' }}">
+            </div>
+          </div>
+          {% if site.smtpPasswordEnc %}<label class="mut" style="font-size:.85rem"><input type="checkbox" name="smtp_password_clear" value="1"> remove the saved password</label>{% endif %}
+          <div class="row">
+            <div>
+              <label>Send from</label>
+              <input type="email" name="smtp_from_email" value="{{ site.smtpFromEmail }}" placeholder="website@example.com" autocomplete="off">
+            </div>
+            <div>
+              <label>Sender name</label>
+              <input type="text" name="smtp_from_name" value="{{ site.smtpFromName }}" placeholder="{{ site.name }}" autocomplete="off">
+            </div>
+          </div>
+          <p class="mut" style="font-size:.82rem;margin:.2rem 0 0;line-height:1.55">
+            <strong>“Send from” must be an address this account is allowed to send as</strong> — usually the mailbox itself. It is never the
+            visitor's address: providers reject, or silently spam-file, a sender they did not authenticate. The person who filled the form in
+            goes into <span class="mono">Reply-To</span>, so hitting reply still answers them.
+          </p>
+          <label style="font-size:.9rem;margin-top:.6rem"><input type="checkbox" name="smtp_verify_cert" value="1" {{ site.smtpVerifyCert ? 'checked' }}> Verify the server's TLS certificate</label>
+          <p class="mut" style="font-size:.82rem;margin:.2rem 0 0 1.5rem;line-height:1.55">
+            Leave this on where you can — your mailbox password travels over this connection. Untick it only for a mail server whose
+            certificate is self-signed or issued for its own hostname, which is common on shared hosting. The connection stays encrypted
+            either way; what you give up is proof of who is on the other end.
+          </p>
+          <div class="row" style="margin-top:.8rem;align-items:flex-end">
+            <div>
+              <label>Send a test to</label>
+              <input type="email" name="smtp_test_to" placeholder="{{ user.email }}" autocomplete="off">
+            </div>
+            <button type="submit" name="action" value="smtp-test" class="btn-secondary" data-busy="Sending…">Save &amp; send test email</button>
+            <button type="submit" name="action" value="smtp-save" data-busy="Saving…">Save only</button>
+          </div>
+        </form>
+        <p class="mut" style="font-size:.82rem;margin:.8rem 0 0;line-height:1.6">
+          <strong>Microsoft 365 and Google Workspace both need more than the normal account password.</strong> Google requires an
+          <em>app password</em>, which needs 2-step verification switched on first. Microsoft disables SMTP AUTH by default on new
+          tenants and it has to be enabled per mailbox by an administrator. If the test comes back “the server rejected the username
+          or password”, that is almost always what it is — not a typo.
+        </p>
+        <p class="mut" style="font-size:.82rem;margin:.6rem 0 0;line-height:1.6">
+          The test sends a <em>real</em> message rather than only logging in, because a server can accept the credentials and still refuse
+          to deliver as that sender. If it arrives, form notifications will arrive.
+        </p>
+      </details>
+    </div>
+    {% endif %}

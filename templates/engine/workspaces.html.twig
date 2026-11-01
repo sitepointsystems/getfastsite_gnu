@@ -1,0 +1,90 @@
+{% extends 'dash-layout.html.twig' %}
+
+{% block body %}
+<h1>Workspaces</h1>
+<p class="sub">Keep customers apart. File each site into a workspace, then pick the workspace in the sidebar to see only its sites. Move a site here from its overview card's ⋮ menu or its Settings screen.</p>
+
+<div class="grid2">
+  <div>
+    <div class="card">
+      <h2 style="margin-top:0">Your workspaces</h2>
+      {# A form cannot span table cells — each row's edit form lives here and
+         its fields reference it via form="ws-edit-N". #}
+      {% for w in ws_list %}
+        {% if user.role == 'admin' or w.owner_user_id == user.id %}
+        <form id="ws-edit-{{ w.id }}" method="post" action="/workspaces/action">
+          <input type="hidden" name="_csrf" value="{{ csrf }}">
+          <input type="hidden" name="action" value="update">
+          <input type="hidden" name="id" value="{{ w.id }}">
+        </form>
+        {% endif %}
+      {% endfor %}
+      <table>
+        <tr><th>Workspace</th><th>Team</th><th>Sites</th><th></th></tr>
+        {% for w in ws_list %}
+        {% set w_manage = user.role == 'admin' or w.owner_user_id == user.id %}
+        <tr>
+          <td>
+            {% if w_manage %}
+              <input form="ws-edit-{{ w.id }}" type="text" name="name" value="{{ w.name }}" style="max-width:13rem">
+            {% else %}{{ w.name }}{% endif %}
+          </td>
+          <td>
+            {% if w_manage %}
+              <select form="ws-edit-{{ w.id }}" name="team_id" style="max-width:10rem">
+                <option value="">— just me —</option>
+                {% for t in user_teams %}<option value="{{ t.id }}" {{ w.team_id == t.id ? 'selected' }}>{{ t.name }}</option>{% endfor %}
+              </select>
+            {% else %}
+              {% set wt = user_teams|filter(t => t.id == w.team_id)|first %}
+              <span class="mut">{{ wt ? wt.name : '—' }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if sites_by_workspace[w.id] is defined %}
+              {% for s in sites_by_workspace[w.id] %}<a href="/sites/{{ s.handle }}/content">{{ s.name }}</a>{{ not loop.last ? ', ' }}{% endfor %}
+            {% else %}<span class="mut">{{ w.site_count ?: 'none' }}</span>{% endif %}
+          </td>
+          <td class="rowacts">
+            {% if w_manage %}
+              <button form="ws-edit-{{ w.id }}" class="button small ghost" type="submit">Save</button>
+              <form method="post" action="/workspaces/action" class="inline"
+                    data-confirm="Delete workspace “{{ w.name }}”? Its sites are kept and go back under “All workspaces”."
+                    data-confirm-title="Delete workspace" data-confirm-ok="Delete" data-confirm-danger>
+                <input type="hidden" name="_csrf" value="{{ csrf }}">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="id" value="{{ w.id }}">
+                <button class="button small danger" type="submit">Delete</button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="mut">No workspaces yet{{ user.role in ['admin', 'editor'] ? ' — create one to the right.' : ' — ask an admin or an editor to add you to one via a team.' }}</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+
+  {% if user.role in ['admin', 'editor'] %}
+  <div>
+    <div class="card">
+      <h2 style="margin-top:0">New workspace</h2>
+      <form method="post" action="/workspaces/action">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="create">
+        <label>Name</label>
+        <input type="text" name="name" placeholder="Customer name" required>
+        <label>Team <span class="mut">(optional — its members can use the workspace)</span></label>
+        <select name="team_id">
+          <option value="">— just me —</option>
+          {% for t in user_teams %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}
+        </select>
+        <div style="margin-top:1rem"><button class="button" type="submit">Create</button></div>
+      </form>
+      <p class="mut" style="font-size:.85rem;margin:.8rem 0 0">Creating a workspace selects it, so the next site you create lands in it automatically.</p>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

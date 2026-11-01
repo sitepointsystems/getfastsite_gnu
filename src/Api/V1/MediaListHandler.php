@@ -7,6 +7,7 @@ namespace Fastsite\Api\V1;
 use Fastsite\Media\Dto\Media;
 use Fastsite\Media\Repository\MediaRepository;
 use Fastsite\Shared\Http\ApiResponse;
+use Fastsite\Shared\SiteLinks;
 use Fastsite\Site\Repository\SiteRepository;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -23,13 +24,14 @@ final class MediaListHandler implements RequestHandlerInterface
     public function handle(ServerRequestInterface $request): ResponseInterface
     {
         $handle = (string) $request->getAttribute('site');
-        if ($this->sites->findByHandle($handle) === null) {
+        $site = $this->sites->findByHandle($handle);
+        if ($site === null) {
             return ApiResponse::error('Unknown site: ' . $handle, 404);
         }
 
         $query = $request->getQueryParams();
         $page = max(1, (int) ($query['page'] ?? 1));
-        $perPage = min(100, max(1, (int) ($query['per_page'] ?? 20)));
+        $perPage = min(200, max(1, (int) ($query['per_page'] ?? 20)));
 
         // Optional ?kind=image|video|file filter (comma-separated allowed).
         $kinds = null;
@@ -54,6 +56,11 @@ final class MediaListHandler implements RequestHandlerInterface
                 'height' => $m->height,
                 'alt' => $m->alt,
                 'status' => $m->status,
+                // Where the file lives. Null while an upload is still
+                // processing, and for video (no renditions yet). Media ships
+                // referenced-only, so this is the URL once a page embeds it.
+                'path' => SiteLinks::mediaPath($m),
+                'url' => SiteLinks::mediaUrl($site, $m),
             ], $result['items']),
             $result['total'],
             $page,

@@ -20,6 +20,10 @@ final class ApiKeyService
     public const SCOPES = [
         'sites:read', 'sites:write', 'content:read', 'content:write', 'media:read', 'media:write',
         'components:write', 'shell:read', 'shell:write', 'translations:manage',
+        // Forms get their own pair rather than folding into sites:* because
+        // submissions are personal data people typed on a public page — a key
+        // that reads site settings should not automatically read the inbox.
+        'forms:read', 'forms:write',
         'publish', 'jobs:read', 'backup:read', 'backup:run', 'backup:restore', 'admin',
     ];
 
@@ -48,14 +52,7 @@ final class ApiKeyService
      */
     public function create(int $userId, string $name, array $scopes, array $sites = ['*'], ?string $expiresAt = null): array
     {
-        foreach ($scopes as $scope) {
-            if (!\in_array($scope, self::SCOPES, true)) {
-                throw new \InvalidArgumentException('Unknown scope: ' . $scope);
-            }
-        }
-        if ($scopes === []) {
-            throw new \InvalidArgumentException('At least one scope is required.');
-        }
+        self::assertScopes($scopes);
 
         $keyId = self::base62(8);
         $secret = self::base62(32);
@@ -232,6 +229,69 @@ final class ApiKeyService
             $this->redis->del(['fastsite:akr:' . $keyRowId, 'fastsite:akc:' . $keyRowId]);
         } catch (\Throwable) {
             // Best-effort — the row is already gone from the DB.
+        }
+    }
+
+    /**
+     * Narrows or widens a LIVE key's scopes in place, leaving the token alone —
+     * the edit that does not make every caller swap credentials.
+     *
+     * THE CACHE INVALIDATION IS THE POINT. verify() keeps the scope list in
+     * Redis for CACHE_TTL, so a bare UPDATE would leave a permission you just
+     * removed working for another five minutes, and a removed scope that still
+     * works is the only failure here that actually matters. Bumping the user's
+     * generation marker makes it immediate AND race-proof: a verify() already
+     * in flight writes its entry carrying the OLD gen, and every cache read
+     * compares gen, so that entry can never be served. The price is one
+     * argon2id on the next call made by this user's other keys.
+     *
+     * @param list<string> $scopes
+     */
+    public function updateScopes(int $keyRowId, array $scopes): void
+    {
+        self::assertScopes($scopes);
+
+        $db = $this->databases->engine();
+        $row = $db->fetchAssociative('SELECT user_id, revoked_at FROM api_keys WHERE id = ?', [$keyRowId]);
+        if ($row === false) {
+            throw new \RuntimeException('API key not found.');
+        }
+        if ($row['revoked_at'] !== null) {
+            throw new \RuntimeException('This key is revoked — create or rotate a key instead.');
+        }
+
+        $db->update(
+            'api_keys',
+            ['scopes' => json_encode(array_values($scopes), JSON_THROW_ON_ERROR)],
+            ['id' => $keyRowId],
+        );
+
+        try {
+            $this->invalidateUser((int) $row['user_id']);
+            // Drop this key's own warm entry too, so the common case finds
+            // nothing rather than merely failing the generation check.
+            $pointer = 'fastsite:akc:' . $keyRowId;
+            $cacheKey = $this->redis->get($pointer);
+            $this->redis->del($cacheKey !== null ? [$cacheKey, $pointer] : [$pointer]);
+        } catch (\Throwable) {
+            // Best-effort, exactly as revoke(): the DB write is the source of
+            // truth and already applied, and with Redis down verify() reads the
+            // row anyway. The TTL bounds any staleness either way.
+        }
+    }
+
+    /**
+     * @param list<string> $scopes
+     */
+    private static function assertScopes(array $scopes): void
+    {
+        foreach ($scopes as $scope) {
+            if (!\in_array($scope, self::SCOPES, true)) {
+                throw new \InvalidArgumentException('Unknown scope: ' . $scope);
+            }
+        }
+        if ($scopes === []) {
+            throw new \InvalidArgumentException('At least one scope is required.');
         }
     }
 

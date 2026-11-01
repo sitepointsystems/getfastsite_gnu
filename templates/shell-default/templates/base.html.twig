@@ -12,17 +12,25 @@
 <meta property="og:type" content="{{ page.og_type|default('website') }}">
 {% if page.canonical %}<meta property="og:url" content="{{ page.canonical }}">{% endif %}
 <meta property="og:site_name" content="{{ site.name }}">
-{% set share = site.social_image_url|default('') %}
+{# A page own featured image is its share card; the site default is the
+   fallback for pages that have none (and for the blog index). Width, height
+   and alt follow whichever one won — mixing a page image with the site
+   dimensions would make every scraper crop it wrong. #}
+{% set page_card = page.og_image_url|default('') %}
+{% set share = page_card ?: site.social_image_url|default('') %}
+{% set share_w = page_card ? page.og_image_width|default(null) : site.social_image_width|default(null) %}
+{% set share_h = page_card ? page.og_image_height|default(null) : site.social_image_height|default(null) %}
+{% set share_alt = page_card ? page.og_image_alt|default('') : site.social_image_alt|default('') %}
 {% if share %}
 <meta property="og:image" content="{{ share }}">
-{% if site.social_image_width is defined %}<meta property="og:image:width" content="{{ site.social_image_width }}">{% endif %}
-{% if site.social_image_height is defined %}<meta property="og:image:height" content="{{ site.social_image_height }}">{% endif %}
-{% if site.social_image_alt is defined and site.social_image_alt %}<meta property="og:image:alt" content="{{ site.social_image_alt }}">{% endif %}
+{% if share_w %}<meta property="og:image:width" content="{{ share_w }}">{% endif %}
+{% if share_h %}<meta property="og:image:height" content="{{ share_h }}">{% endif %}
+{% if share_alt %}<meta property="og:image:alt" content="{{ share_alt }}">{% endif %}
 <meta name="twitter:image" content="{{ share }}">
 {% endif %}
 <meta name="twitter:card" content="{{ share ? 'summary_large_image' : 'summary' }}">
 <meta name="theme-color" content="#0a0f1a">
-{% if site.favicon_url %}<link rel="icon" href="{{ site.favicon_url }}">{% else %}<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f1a'/%3E%3Ccircle cx='16' cy='16' r='7' fill='%2306d6a0'/%3E%3C/svg%3E">{% endif %}
+{% if site.favicon_url %}<link rel="icon"{% if site.favicon_type %} type="{{ site.favicon_type }}"{% endif %} href="{{ site.favicon_url }}">{% else %}<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f1a'/%3E%3Ccircle cx='16' cy='16' r='7' fill='%2306d6a0'/%3E%3C/svg%3E">{% endif %}
 {% if page.preload %}{{ page.preload|raw }}{% endif %}
 {% if inline_css %}<style>{{ inline_css|raw }}</style>{% endif %}
 {% if page.component_css %}<style>{{ page.component_css|raw }}</style>{% endif %}

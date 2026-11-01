@@ -5,7 +5,7 @@
 {# A published page with slug "home" drives the root — render its body. #}
 {{ content.body_html|raw }}
 {% else %}
-<section class="hero">
+<section class="hero" data-cta-location="hero">
   <div class="wrap">
     <h1>{{ site.name }}</h1>
   </div>

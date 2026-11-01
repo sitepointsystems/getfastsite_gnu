@@ -47,6 +47,6 @@ final class ContentDeleteHandler implements RequestHandlerInterface
 
         $this->audit->log($access, 'content.delete', $handle, 'content:' . $id, [], ApiHelpers::clientIp($request));
 
-        return ApiResponse::success(ApiHelpers::contentToArray($deleted));
+        return ApiResponse::success(ApiHelpers::contentToArray($deleted, $site));
     }
 }

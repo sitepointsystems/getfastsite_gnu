@@ -1,0 +1,91 @@
+    <div class="card">
+      <h2 style="margin-top:0">SEO</h2>
+      {% if can_manage %}
+      <form method="post" action="/sites/{{ site.handle }}/settings/action">
+        <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="tab" value="{{ tab }}">
+        <input type="hidden" name="action" value="seo-save">
+        <label style="margin:0"><input type="checkbox" name="seo_title_suffix" value="1" {{ site.seoTitleSuffix ? 'checked' }}> Append the site name to page titles <span class="mut">(the <span class="mono">&lt;title&gt;</span> and og:title of every post, page, blog index and 404)</span></label>
+        <div class="row" style="margin-top:1rem">
+          <div class="tight">
+            <label>Separator</label>
+            {# Keep the option set in sync with SiteService::TITLE_SEPARATORS. #}
+            <select name="seo_title_separator">
+              {% for sep, label in {'—': 'em dash', '–': 'en dash', '-': 'hyphen', '|': 'pipe', '·': 'middle dot', ':': 'colon'} %}
+                <option value="{{ sep }}" {{ site.seoTitleSeparator == sep ? 'selected' }}>{{ sep }}&nbsp;&nbsp;{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div style="align-self:end">
+            <p class="mut" style="font-size:.85rem;margin:0 0 .55rem">Example: <span class="mono" id="seo-title-example"></span></p>
+          </div>
+        </div>
+        <script>
+        (function(){
+          var box = document.getElementById('seo-title-example');
+          var chk = document.querySelector('input[name=seo_title_suffix]');
+          var sel = document.querySelector('select[name=seo_title_separator]');
+          var name = {{ site.name|json_encode|raw }};
+          function paint(){ box.textContent = 'My first post' + (chk.checked ? ' ' + sel.value + ' ' + name : ''); }
+          chk.addEventListener('change', paint); sel.addEventListener('change', paint); paint();
+        })();
+        </script>
+        <label style="margin-top:1rem"><input type="checkbox" name="cta_tracking" value="1" {{ site.ctaTracking ? 'checked' }}> CTA click tracking attributes <span class="mut">(every link and button gets <span class="mono">data-cta</span>, <span class="mono">data-cta-text</span>, <span class="mono">data-cta-language</span> and <span class="mono">data-cta-location</span> for GTM — inert markup, no JavaScript ships)</span></label>
+        <label style="margin-top:.5rem">Default meta description <span class="mut">(used by the home page, blog index and 404 — and by any post or page with no description or excerpt of its own)</span></label>
+        <textarea name="meta_description" rows="2" maxlength="320" placeholder="One sentence describing the site. Around 150 characters reads best in search results.">{{ site.metaDescription }}</textarea>
+        <p class="mut" style="font-size:.8rem;margin:.3rem 0 0">A post's own SEO title (set in the editor) always ships exactly as written — the suffix only applies to titles the engine composes. Saving republishes the site when these change.</p>
+
+        <hr style="border:0;border-top:1px solid var(--border);margin:1.4rem 0 1.1rem">
+        <h3 style="margin:0 0 .2rem;font-size:1rem">Structured data</h3>
+        <p class="mut" style="font-size:.83rem;margin:0 0 .7rem">Every page ships one schema.org JSON-LD graph — the site entity, the page, its breadcrumb trail, and the article on posts — injected into the head, so it works whatever the shell looks like.</p>
+        <label style="margin:0"><input type="checkbox" name="structured_data" value="1" {{ site.structuredData ? 'checked' }}> Emit schema.org JSON-LD <span class="mut">(leave on unless your shell writes its own)</span></label>
+        <div class="row" style="margin-top:1rem">
+          <div class="tight">
+            <label>This site is a</label>
+            {# Keep in sync with SiteService::SCHEMA_TYPES. #}
+            <select name="schema_type">
+              {% for type, label in {'Organization': 'Organization — a company or product', 'Person': 'Person — a personal brand'} %}
+                <option value="{{ type }}" {{ site.schemaType == type ? 'selected' }}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <label style="margin-top:.8rem">Profile URLs <span class="mut">(one per line — LinkedIn, X, GitHub, Crunchbase, Wikipedia…)</span></label>
+        <textarea name="schema_same_as" rows="3" placeholder="https://www.linkedin.com/company/example&#10;https://github.com/example">{{ site.sameAs|join("\n") }}</textarea>
+        <p class="mut" style="font-size:.8rem;margin:.3rem 0 0">This is <span class="mono">sameAs</span>, and it is the part that earns its keep: a name and a URL rarely tell Google which real-world entity a site is, a set of matching profiles usually does. Absolute <span class="mono">https://</span> URLs only, 25 maximum.</p>
+
+        <p style="margin:1rem 0 0"><button class="button" type="submit">Save SEO settings</button></p>
+      </form>
+      {% else %}
+        <dl class="kv">
+          <dt>Site name in titles</dt><dd>{{ site.seoTitleSuffix ? 'on — “My first post ' ~ site.seoTitleSeparator ~ ' ' ~ site.name ~ '”' : 'off' }}</dd>
+          <dt>CTA click tracking</dt><dd>{{ site.ctaTracking ? 'on — data-cta attributes on every link/button' : 'off' }}</dd>
+          <dt>Default meta description</dt><dd>{{ site.metaDescription ?: '—' }}</dd>
+          <dt>Structured data</dt><dd>{{ site.structuredData ? 'on — JSON-LD graph as ' ~ site.schemaType : 'off' }}</dd>
+          <dt>Profile URLs</dt><dd>{{ site.sameAs ? site.sameAs|length ~ ' linked' : '—' }}</dd>
+        </dl>
+        <p class="mut" style="font-size:.85rem">Only administrators or the site owner can change these.</p>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0">Permalinks</h2>
+      <p class="mut" style="font-size:.85rem;margin:0 0 .8rem">Where posts and category archives live. To keep a site ported from WordPress on its exact URLs, set these <strong>before</strong> importing: <span class="mono">/{category}/{slug}/</span> is WordPress's "category + post name". Changing them later records a 301 for every published URL that moves.</p>
+      {% if can_manage %}
+      <form method="post" action="/sites/{{ site.handle }}/settings/action">
+        <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="tab" value="{{ tab }}">
+        <input type="hidden" name="action" value="permalinks-save">
+        <div class="row">
+          <div><label>Post URL <span class="mut">({slug} required; {category} optional — a post with none drops that segment)</span></label><input type="text" name="post_path_pattern" class="mono" value="{{ site.postPathPattern }}" required></div>
+          <div><label>Category archive URL <span class="mut">({slug} = the category; page 2 adds page/2/)</span></label><input type="text" name="category_path_pattern" class="mono" value="{{ site.categoryPathPattern }}" required></div>
+          <div class="tight"><label>Posts per archive page</label><input type="number" name="archive_per_page" min="1" max="100" value="{{ site.archivePerPage }}"></div>
+        </div>
+        <p style="margin:1rem 0 0"><button class="button" type="submit">Save permalinks</button></p>
+      </form>
+      {% else %}
+        <dl class="kv">
+          <dt>Post URL</dt><dd class="mono">{{ site.postPathPattern }}</dd>
+          <dt>Category archive URL</dt><dd class="mono">{{ site.categoryPathPattern }}</dd>
+          <dt>Posts per archive page</dt><dd>{{ site.archivePerPage }}</dd>
+        </dl>
+      {% endif %}
+    </div>

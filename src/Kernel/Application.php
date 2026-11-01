@@ -8,8 +8,7 @@ use DI\ContainerBuilder;
 use FastRoute\Dispatcher;
 use FastRoute\RouteCollector;
 use Fastsite\Shared\Http\ApiResponse;
-use Nyholm\Psr7\Factory\Psr17Factory;
-use Nyholm\Psr7Server\ServerRequestCreator;
+use GuzzleHttp\Psr7\ServerRequest;
 use Psr\Container\ContainerInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -66,9 +65,7 @@ final class Application
 
     public function handleHttp(): void
     {
-        $psr17 = new Psr17Factory();
-        $creator = new ServerRequestCreator($psr17, $psr17, $psr17, $psr17);
-        $request = $creator->fromGlobals();
+        $request = ServerRequest::fromGlobals();
 
         try {
             $response = $this->dispatch($request);
@@ -112,7 +109,7 @@ final class Application
         // answer it here (before the 405) with permissive preflight headers so
         // browser MCP/OAuth clients can call the discovery + token endpoints.
         if ($result[0] === Dispatcher::METHOD_NOT_ALLOWED && strtoupper($request->getMethod()) === 'OPTIONS') {
-            return new \Nyholm\Psr7\Response(204, [
+            return new \GuzzleHttp\Psr7\Response(204, [
                 'Access-Control-Allow-Origin' => '*',
                 'Access-Control-Allow-Methods' => 'GET, POST, DELETE, PUT, PATCH, OPTIONS',
                 'Access-Control-Allow-Headers' => 'Authorization, Content-Type, MCP-Protocol-Version, MCP-Session-Id, X-API-Key',

@@ -3,21 +3,39 @@
 {% block body %}
 <div class="head-row">
   <div>
-    <h1 style="margin:0">{{ trash ? 'Trash' : 'Sites' }}</h1>
-    <p class="sub" style="margin:.3rem 0 0">{{ trash ? 'Deleted sites — recover them, or delete permanently.' : 'Everything you publish through fastsite.' }}</p>
+    {% set active_ws = workspaces|filter(w => w.id == current_workspace)|first %}
+    <h1 style="margin:0">{{ trash ? 'Trash' : (active_ws ? active_ws.name : 'Sites') }}</h1>
+    <p class="sub" style="margin:.3rem 0 0">{{ trash ? 'Deleted sites — recover them, or delete permanently.' : (active_ws ? 'Sites in this workspace only — switch to "All workspaces" in the sidebar to see everything.' : 'Everything you publish through fastsite.') }}</p>
   </div>
   <div>
     {% if trash %}
       <a class="button small ghost" href="/">← Back to sites</a>
-    {% elseif trash_count %}
-      <a class="button small ghost" href="/?trash=1">Trash ({{ trash_count }})</a>
+    {% else %}
+      {% if trash_count %}<a class="button small ghost" href="/?trash=1">Trash ({{ trash_count }})</a>{% endif %}
+      {% if user.role in ['admin', 'editor'] %}<a class="button small" href="#new-site" onclick="document.getElementById('new-site').open = true">＋ New site</a>{% endif %}
     {% endif %}
   </div>
 </div>
 
+{% if not trash and user.role in ['admin', 'editor'] %}
+<details class="card" id="new-site" style="margin-top:1.25rem" {{ cards is empty ? 'open' }}>
+  <summary style="font-weight:600;cursor:pointer">New site</summary>
+  <form method="post" action="/sites/action" class="row" style="margin-top:.9rem">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="action" value="create-site">
+    <div class="tight"><label>Handle <span class="mut">(immutable, e.g. blog)</span></label><input type="text" name="handle" pattern="[a-z0-9][a-z0-9\-]*" placeholder="blog" required></div>
+    <div><label>Name</label><input type="text" name="name" placeholder="My blog"></div>
+    <div><label>Base URL <span class="mut">(optional now)</span></label><input type="url" name="url" placeholder="https://example.com"></div>
+    <div class="tight"><label>Locale</label><input type="text" name="locale" value="en" size="4"></div>
+    <div class="tight" style="align-self:end"><button class="button" type="submit">Create</button></div>
+  </form>
+  <p class="mut" style="font-size:.85rem;margin:.6rem 0 0">Provisions the database and a default shell. Set the domain, repo and go-live options on the site's Settings screen afterwards — and share it with collaborators via a team.</p>
+</details>
+{% endif %}
+
 {% if cards is empty %}
   <div class="card" style="margin-top:1.25rem">
-    {% if trash %}Trash is empty.{% else %}No sites yet{% if user.role == 'admin' %} — create one under <a href="/admin/sites">Sites &amp; webhooks</a>{% else %} — ask an admin to give you access{% endif %}.{% endif %}
+    {% if trash %}Trash is empty.{% elseif active_ws %}No sites in this workspace yet — move one here from its card's ⋮ menu, or create one above while this workspace is selected. Manage workspaces on the <a href="/workspaces">Workspaces</a> screen.{% elseif user.role in ['admin', 'editor'] %}No sites yet — create one above.{% else %}No sites yet — ask an admin or an editor to give you access.{% endif %}
   </div>
 {% endif %}
 
@@ -30,10 +48,15 @@
     </a>
     <h2 style="margin:0 0 .2rem">{{ c.site.name }}</h2>
     <p class="mut" style="margin:0 0 .8rem;font-size:.85rem">
-      {% if c.site.baseUrl %}<a href="{{ c.site.baseUrl }}" rel="noopener" target="_blank">{{ c.site.baseUrl }}</a>{% else %}no URL configured{% endif %}
+      {# canonicalBaseUrl, not baseUrl: link the host the site actually answers on. #}
+      {% if c.site.baseUrl %}<a href="{{ c.site.canonicalBaseUrl }}" rel="noopener" target="_blank">{{ c.site.canonicalBaseUrl }}</a>{% else %}no URL configured{% endif %}
     </p>
     <dl class="kv">
-      <dt>Status</dt><dd><span class="badge {{ c.site.status == 'active' ? 'ok' : 'mut' }}">{{ c.site.status }}</span></dd>
+      <dt>Status</dt><dd><span class="badge {{ c.site.status == 'active' ? 'ok' : 'mut' }}">{{ c.site.status }}</span>
+        {# The one state worth seeing without opening the site: a site nobody
+           remembers is still noindexed looks completely healthy otherwise. #}
+        {% if c.site.development %}<span class="badge warn" title="Every page publishes with noindex, nofollow — this site cannot appear in search">in development</span>{% endif %}
+      </dd>
       <dt>Content</dt><dd>{{ c.counts.published|default(0) }} published, {{ c.counts.draft|default(0) }} draft</dd>
       <dt>Languages</dt><dd>{{ c.site.primaryLocale }}{% for l in c.site.locales %}, {{ l }}{% endfor %}</dd>
       {% if trash %}
@@ -82,6 +105,20 @@
         <div class="kebab-menu">
           <a href="/sites/{{ c.site.handle }}/settings">Settings</a>
           <a href="/sites/{{ c.site.handle }}/webhooks">Webhooks</a>
+          {% if c.can_manage and workspaces|length %}
+          <div class="ws-move">
+            <div class="zone-label">Workspace</div>
+            <form method="post" action="/workspaces/action">
+              <input type="hidden" name="_csrf" value="{{ csrf }}">
+              <input type="hidden" name="action" value="move-site">
+              <input type="hidden" name="handle" value="{{ c.site.handle }}">
+              <select name="workspace_id" onchange="this.form.submit()" aria-label="Move to workspace">
+                <option value="">— none —</option>
+                {% for w in workspaces %}<option value="{{ w.id }}" {{ c.site.workspaceId == w.id ? 'selected' }}>{{ w.name }}</option>{% endfor %}
+              </select>
+            </form>
+          </div>
+          {% endif %}
           <div class="danger-zone">
             <div class="zone-label">Danger zone</div>
             <form method="post" action="/sites/action"
@@ -109,5 +146,8 @@
   .card-thumb.empty img{display:none}
   .card-thumb.empty .card-thumb-fallback{display:flex}
   .card-actions{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:1rem;align-items:center}
+  .kebab-menu .ws-move{margin-top:.3rem;padding-top:.35rem;border-top:1px solid var(--border)}
+  .kebab-menu .ws-move .zone-label{font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);padding:.1rem .6rem .2rem}
+  .kebab-menu .ws-move select{width:100%;padding:.35rem .5rem;font-size:.85rem}
 </style>
 {% endblock %}

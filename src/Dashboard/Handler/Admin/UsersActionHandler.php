@@ -49,10 +49,31 @@ final class UsersActionHandler implements RequestHandlerInterface
                         (string) ($body['email'] ?? ''),
                         (string) ($body['password'] ?? ''),
                         trim((string) ($body['name'] ?? '')),
-                        ($body['role'] ?? 'user') === 'admin' ? 'admin' : 'user',
+                        \in_array($body['role'] ?? 'user', ['admin', 'editor'], true) ? (string) $body['role'] : 'user',
                     );
 
                     return $this->dash->redirect('/admin/users', 'User #' . $id . ' created.');
+
+                case 'edit':
+                    $userId = (int) ($body['user_id'] ?? 0);
+                    if ($engine->fetchOne('SELECT 1 FROM users WHERE id = ? AND deleted_at IS NULL', [$userId]) === false) {
+                        return $this->dash->redirect('/admin/users', '', 'No such user.');
+                    }
+                    $this->users->updateProfile($userId, (string) ($body['email'] ?? ''), (string) ($body['name'] ?? ''));
+
+                    return $this->dash->redirect('/admin/users', 'User updated.');
+
+                case 'set-role':
+                    $userId = (int) ($body['user_id'] ?? 0);
+                    if ($userId === $admin['id']) {
+                        return $this->dash->redirect('/admin/users', '', 'You cannot change your own role.');
+                    }
+                    if ($engine->fetchOne('SELECT 1 FROM users WHERE id = ? AND deleted_at IS NULL', [$userId]) === false) {
+                        return $this->dash->redirect('/admin/users', '', 'No such user.');
+                    }
+                    $this->users->setRole($userId, (string) ($body['role'] ?? ''));
+
+                    return $this->dash->redirect('/admin/users', 'Role updated.');
 
                 case 'toggle':
                     $userId = (int) ($body['user_id'] ?? 0);
@@ -73,6 +94,24 @@ final class UsersActionHandler implements RequestHandlerInterface
 
                     return $this->dash->redirect('/admin/users', $activate ? 'User activated.' : 'User deactivated — sessions and key cache cleared.');
 
+                case 'delete':
+                    $userId = (int) ($body['user_id'] ?? 0);
+                    if ($userId === $admin['id']) {
+                        return $this->dash->redirect('/admin/users', '', 'You cannot delete yourself.');
+                    }
+                    $email = $engine->fetchOne('SELECT email FROM users WHERE id = ? AND deleted_at IS NULL', [$userId]);
+                    if ($email === false) {
+                        return $this->dash->redirect('/admin/users', '', 'No such user.');
+                    }
+                    // Sessions live in Redis (no FK) and the key cache is
+                    // Redis-positive — clear both before the row goes.
+                    $this->sessions->logoutAllForUser($userId);
+                    $this->remember->revokeAll($userId);
+                    $this->keys->invalidateUser($userId);
+                    $this->users->deleteUser($userId);
+
+                    return $this->dash->redirect('/admin/users', 'User ' . $email . ' permanently deleted — their teams are gone, their sites remain (assign a new owner above).');
+
                 case 'reset-password':
                     $userId = (int) ($body['user_id'] ?? 0);
                     $this->users->setPassword($userId, (string) ($body['password'] ?? ''));
@@ -81,6 +120,8 @@ final class UsersActionHandler implements RequestHandlerInterface
 
                     return $this->dash->redirect('/admin/users', 'Password reset — the user was signed out everywhere.');
 
+                // Site access is EITHER ownership OR team membership — there
+                // is no per-user "grant". These two manage the owner rows.
                 case 'grant-site':
                     $userId = (int) ($body['user_id'] ?? 0);
                     $handle = (string) ($body['site'] ?? '');
@@ -88,17 +129,13 @@ final class UsersActionHandler implements RequestHandlerInterface
                     if ($siteId === false) {
                         return $this->dash->redirect('/admin/users', '', 'No such site.');
                     }
-                    $exists = $engine->fetchOne('SELECT 1 FROM site_users WHERE site_id = ? AND user_id = ?', [(int) $siteId, $userId]);
-                    if ($exists === false) {
-                        $engine->insert('site_users', [
-                            'site_id' => (int) $siteId,
-                            'user_id' => $userId,
-                            'role' => ($body['site_role'] ?? 'editor') === 'owner' ? 'owner' : 'editor',
-                            'created_at' => $this->clock->iso(),
-                        ]);
-                    }
+                    $engine->executeStatement(
+                        "INSERT INTO site_users (site_id, user_id, role, created_at) VALUES (?, ?, 'owner', ?)
+                         ON CONFLICT (site_id, user_id) DO UPDATE SET role = 'owner'",
+                        [(int) $siteId, $userId, $this->clock->iso()],
+                    );
 
-                    return $this->dash->redirect('/admin/users', 'Access granted.');
+                    return $this->dash->redirect('/admin/users', 'User is now an owner of "' . $handle . '".');
 
                 case 'revoke-site':
                     $userId = (int) ($body['user_id'] ?? 0);
@@ -108,7 +145,7 @@ final class UsersActionHandler implements RequestHandlerInterface
                         [$userId, $handle],
                     );
 
-                    return $this->dash->redirect('/admin/users', 'Access revoked.');
+                    return $this->dash->redirect('/admin/users', 'Ownership removed.');
 
                 default:
                     return $this->dash->redirect('/admin/users', '', 'Unknown action.');

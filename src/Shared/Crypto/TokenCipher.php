@@ -10,7 +10,7 @@ namespace Fastsite\Shared\Crypto;
  * Own issued tokens are hashed, never encrypted — see plan §access.
  *
  * AES-256-GCM via openssl. Key derived from APP_SECRET (any length,
- * normalised to 32 bytes via SHA-256). Ported from conzent's TokenCipher.
+ * normalised to 32 bytes via SHA-256). Ported from an earlier in-house build.
  *
  * Ciphertext format (base64 of): [12-byte IV][16-byte GCM tag][ciphertext]
  */

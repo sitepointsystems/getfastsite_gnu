@@ -30,15 +30,35 @@ final class AuthoringGuideService
             $this->rule('content-body-only', 'Content model', 'Send body HTML only',
                 'Posts and pages are pure HTML in the body. Do NOT include <html>, <head>, <header>, <footer>, <script>, <style>, or a page <title> in content — those come from the shell.',
                 'The engine wraps your body in the shell and strips disallowed tags. Design the chrome once in the shell; author content as body fragments.'),
+            $this->rule('content-structured-fields', 'Content model', 'Use intro / tldr / conclusion for summary boxes',
+                'A post\'s lead paragraph, TL;DR summary box, and conclusion are separate fields (`intro`, `tldr`, `conclusion` — each an HTML fragment, e.g. one <p> or a <ul>). Do NOT bake their markup into body_html — the shell renders them as styled boxes so every post shares one design.',
+                'Send them on create_post/update_post (MCP), the content REST endpoints, or webhook payloads. They are sanitized and auto-translated like the body, and exposed to the shell as content.intro_html / content.tldr_html / content.conclusion_html. Empty string clears a field on update.'),
+            $this->rule('content-toc', 'Content model', 'Table of contents is automatic + opt-in',
+                'The build injects slugified id attributes into body <h2>/<h3> that lack one (hand-written ids are respected) and exposes `content.toc` (list of {id, text, level}) to the shell. A shell opts into a rendered TOC by emitting a nav that carries the `data-fs-toc` attribute with `#id` links.',
+                'When a page renders a data-fs-toc nav, the engine injects a tiny scroll-spy that marks the active link with class `fs-active` + aria-current="true" (style those in shell CSS) and the site\'s CSP allows inline scripts (Lighthouse stays 100). No nav → no script ships and CSP stays zero-JS.'),
             $this->rule('content-images', 'Content model', 'Reference images by media id',
                 'Embed images with <img data-media-id="N" alt="…">. Never hotlink external image URLs in the body.',
                 'Upload via the media API/MCP first; the build expands data-media-id into a responsive <picture> with AVIF/WebP + explicit width/height. External <img src> FAILS the build.'),
+            $this->rule('content-upload-route', 'Content model', 'Upload a file you hold with an upload ticket',
+                'To get a file you are HOLDING into the library, call create_upload_ticket and PUT the raw bytes to the upload_url it returns: curl --upload-file photo.jpg "<upload_url>". Use upload_media_from_url when the file is already hosted. Treat upload_media_from_base64 as a last resort for something small.',
+                'An upload ticket is single-use, expires in 30 minutes and is scoped to one site, and the bytes travel as an ordinary HTTP body — so the only limits that apply are the real per-type ceilings (15 MB image, 100 MB generic file, 500 MB video). Base64 is different in kind, not just degree: it is an ARGUMENT of the tool call, so a model has to emit it at about 4/3 the size of the file, which exhausts an output budget around 100 KB and then TRUNCATES rather than erroring — the item still reports status: ready while holding a corrupt file. If you cannot make an HTTP request at all, say so rather than sending a large base64 payload.'),
             $this->rule('content-components', 'Content model', 'Embed components as placeholders',
                 'Embed a component with <div data-fs-component="handle" data-values=\'{…}\'></div>.',
                 'The build renders the component to static HTML (zero shipped JS). Only <div data-fs-component> + data-values survive sanitization.'),
+            $this->rule('content-forms', 'Content model', 'Embed forms as placeholders — never write form markup',
+                'A contact or enquiry form is embedded with <div data-fs-form="handle"></div>. Do NOT author <form>, <input>, <textarea> or <button> in body HTML: the sanitizer strips them on every ingest path, so hand-written form markup silently disappears.',
+                'Define the form first (its fields, recipients and subject) on the dashboard Forms screen, via `upsert_form` over MCP, or PUT /api/v1/sites/{site}/forms/{handle}. The build then generates a real, accessible, natively-validating form in place of the placeholder — and it ships ZERO JavaScript, so the page keeps its 100/100/100/100. The recipient address lives in the form definition and can never be set from the page. If the handle does not exist the placeholder renders as nothing, so create the form before referencing it.'),
+            $this->rule('content-forms-custom', 'Content model', 'A bespoke form can post to the endpoint itself',
+                'When the generated markup is not enough — a multi-step wizard, a price calculator, anything with its own layout or script — author the form yourself in VERBATIM content and point it at the same endpoint: `<form method="post" action="{engine}/f/{site}/{form-handle}">`. Still define the form in the engine: that is what supplies the recipients, the field labels and order in the notification, and the server-side validation.',
+                'Give each input a `name` matching a field in the definition (undefined names are ignored, so nothing a bot invents is stored). Use `hidden` fields for values your script computes, such as a running total. Add the consent checkbox as `_fs_consent` if the definition sets consent text. Do NOT render the honeypot — it only exists in generated markup. The endpoint answers a 303 to your thank-you page on success and a plain error page on a validation failure, so it works with no JavaScript at all.'),
+
+            $this->rule('content-categories', 'Content model', 'Give every post its category; let the engine build archives and crumbs',
+                'A post has ONE category (`category` on create_post/update_post, by slug — create it first with upsert_category). It decides the archive the post is listed in, the Home > Category > post breadcrumb, and, when the site\'s post_path_pattern carries {category}, the post\'s URL. Pages have no category. Never hand-write archive pages or breadcrumb markup in content.',
+                'The build generates every category archive (/category/{slug}/, then /category/{slug}/page/2/ …) from the posts, each canonical to itself, and gives the shell `page.breadcrumb`, `category` and `pagination` to render (template `category.html.twig`, falling back to blog-index). To keep a ported site\'s URLs exactly, set post_path_pattern (e.g. /{category}/{slug}/) and category_path_pattern BEFORE importing; changing them later records a 301 for every moved URL.'),
+
             $this->rule('content-no-active', 'Content model', 'No scripts, styles, or external resources in the body',
                 'No <script>, inline styles, iframes, or third-party <img>/<link>/<video src>.',
-                'Sanitizer strips these; any external fetched resource or shipped <script> FAILS the build.'),
+                'Sanitizer strips these; any external fetched resource or shipped <script> FAILS the build. EXCEPTION — trusted ports: a site with sanitize_content off (or a single write passing sanitize:false) stores the body VERBATIM, keeping scripts/styles/iframes and interactive markup and exempting the page from these checks. Verbatim is a property of the content, so translated copies keep it too.'),
 
             // ── Shell requirements ──────────────────────────────────────
             $this->rule('shell-lang', 'Shell', 'Set <html lang> per locale',
@@ -72,7 +92,7 @@ final class AuthoringGuideService
                 'https://developer.chrome.com/docs/lighthouse/performance/uses-responsive-images/'),
             $this->rule('perf-lcp', 'Performance', 'Prioritize the LCP image',
                 'The largest above-the-fold image should load eagerly with fetchpriority=high and a head preload.',
-                'Set featured_media_id — the engine emits eager + fetchpriority=high + a preload for it.',
+                'Set featured_media_id (on create OR update; 0/null clears) — the engine renders that image eager + fetchpriority=high wherever it appears (featured_html or authored in the body) and preloads it in the head. Without it, the first hero-sized (≥1000px wide) body image is prioritised automatically; a page with images but no prioritised one WARNs at build.',
                 'https://developer.chrome.com/docs/performance/insights/lcp-breakdown'),
             $this->rule('perf-render-blocking', 'Performance', 'No render-blocking resources',
                 'No blocking external CSS/JS in the <head>.',
@@ -95,9 +115,9 @@ final class AuthoringGuideService
                 'Cloudflare compresses (gzip/brotli) at the edge; the engine emits _headers with immutable caching for /assets, /media, /files. FCP/TTFB are strong because pages are static behind the CDN.'),
 
             // ── SEO ─────────────────────────────────────────────────────
-            $this->rule('seo-apex', 'SEO', 'Canonical to the apex domain (no www.)',
-                'Always link the apex host (example.com), never www.example.com, to avoid duplicate content.',
-                'The engine normalizes the site base URL to the apex, canonicals to it, and emits a www→apex 301 redirect. A www. canonical WARNs.'),
+            $this->rule('seo-apex', 'SEO', 'Use the site\'s ONE canonical host',
+                'Link only the site\'s canonical host — the apex (example.com) by default, or www.example.com if that is what the site chose. Never mix the two.',
+                'Prefer root-relative links (/blog/x/) and the engine gets the host right for you. It canonicals every page to the chosen host; the other form 301s to it (performed by the engine in direct mode, by a Cloudflare zone Redirect Rule on a CDN). A canonical on the wrong host WARNs.'),
             $this->rule('seo-crawlable-links', 'SEO', 'Use real, crawlable links',
                 'Navigation must use <a href="/real/path">. No href-less <a>, bare href="#", or javascript: links.',
                 'In-page anchors (href="#section") are fine. Non-crawlable links WARN.',
@@ -105,6 +125,14 @@ final class AuthoringGuideService
             $this->rule('seo-auto-files', 'SEO', 'sitemap.xml, robots.txt, llms.txt are automatic',
                 'Do not hand-author these — the build generates them every publish.',
                 'Per-locale sitemaps + index, a robots.txt (with a banner + Sitemap + llms link), and an llms.txt describing your pages/posts for LLMs.'),
+            $this->rule('seo-structured-data', 'SEO', 'Structured data is automatic — do not hand-write JSON-LD',
+                'Never put a <script type="application/ld+json"> block in a shell template or in body HTML. The build emits ONE schema.org @graph per page into the <head> and it already covers the site entity (Organization or Person, with logo and sameAs profiles), WebSite, WebPage (CollectionPage on the blog index), BreadcrumbList, and on posts a BlogPosting with its author, publisher and featured ImageObject — all cross-referenced by @id.',
+                'It ships on EVERY site regardless of shell: the graph is injected into the rendered head, and a shell that emits the `json_ld` variable itself is detected so nothing is duplicated. Page-specific extras (Product, Event, HowTo, a Recipe) go in the content row\'s `json_ld` field — those nodes are merged INTO the page graph, and a node declaring its own Article/BlogPosting type replaces the engine\'s. Set the site\'s schema_type to Person for a personal brand, and fill in schema_same_as with real profile URLs: that is what actually resolves the site to an entity. Deliberately absent, and not worth adding by hand: SearchAction/sitelinks searchbox (retired by Google in November 2024) and FAQPage (rich results withdrawn in August 2023).',
+                'https://developers.google.com/search/docs/appearance/structured-data/search-gallery'),
+            $this->rule('seo-share-card', 'SEO', 'A page featured image is also its share card',
+                'Set a featured image on every post and page you expect to be shared. The build turns it into that page own og:image and twitter:image automatically — a 1200x630 crop the media pipeline already renders for every upload, served as an absolute URL because scrapers do not resolve relative paths. A page with no featured image falls back to the site default share image, so a site whose pages all share one card is a site whose pages have no featured images.',
+                'A shell reads `page.og_image_url` / `_width` / `_height` / `_alt` and falls back to `site.social_image_url` / `social_image_*` when the page carries none; take width, height and alt from whichever one you used, never a mix. Both bundled shells do this. The crop is only published for images some page actually references as a card, so do not hand-build a URL to one.',
+                'https://developers.facebook.com/docs/sharing/webmasters/images'),
 
             // ── Accessibility ───────────────────────────────────────────
             $this->rule('a11y-contrast', 'Accessibility', 'Sufficient text contrast',
@@ -117,7 +145,19 @@ final class AuthoringGuideService
                 'https://dequeuniversity.com/rules/axe/4.12/link-in-text-block'),
             $this->rule('a11y-alt', 'Accessibility', 'Every image needs alt text',
                 'Provide meaningful alt text; mark purely decorative images decorative:true.',
-                'alt is required at upload; a missing alt FAILS the build.'),
+                'Omitted alt is generated automatically at upload (vision AI when the site has an AI key, else the filename) — but an alt you write beats a generated one; a missing alt in shipped HTML FAILS the build.'),
+            $this->rule('seo-lengths', 'SEO', 'Titles and descriptions fit the snippet',
+                'SEO titles 30–60 characters; meta descriptions 120–156. Google truncates beyond that and a shorter one wastes the snippet.',
+                'Check with the seo:check CLI / check_seo_lengths MCP tool; fix_seo_lengths rewrites offenders to fit.',
+                'https://developers.google.com/search/docs/appearance/snippet'),
+
+            // ── Analytics ───────────────────────────────────────────────
+            $this->rule('analytics-cta-attributes', 'Analytics', 'Every link and button carries CTA tracking attributes',
+                'Every <a href>, <button> and submit <input> on a published page ships four inert data attributes for GTM click tracking: data-cta (stable snake_case id, IDENTICAL on every locale\'s variant of the page), data-cta-text (the actual visible text — per-locale), data-cta-language (the page\'s locale) and data-cta-location (header/navigation/footer/hero/…).',
+                'The build fills anything you omit (id from the href path with the locale prefix stripped, text from the element, location from the nearest landmark), so plain markup is already compliant. Author data-cta explicitly on your IMPORTANT conversion CTAs ("book_demo", "signup") so reports use your naming — an authored attribute always beats the generated one. Off switch: the site\'s cta_tracking setting. Zero JS ships either way; GTM\'s own click triggers read the attributes.'),
+            $this->rule('analytics-cta-location', 'Analytics', 'Mark regions once with data-cta-location',
+                'data-cta-location cascades: put it on a CONTAINER and every link/button inside inherits it. Unmarked regions fall back to landmarks — header → header, nav → navigation, footer → footer, aside → sidebar — with "content" as the default.',
+                'In the shell, mark the regions landmarks cannot name: <section data-cta-location="hero">, a pricing block, a sticky CTA bar. One attribute per region beats per-link annotation, and it survives every content change.'),
         ];
     }
 
@@ -135,7 +175,8 @@ final class AuthoringGuideService
             'site' => $site !== null ? [
                 'handle' => $site->handle,
                 'name' => $site->name,
-                'base_url' => $site->baseUrl,
+                'base_url' => $site->canonicalBaseUrl(),
+                'canonical_host' => $site->canonicalHost,
                 'primary_locale' => $site->primaryLocale,
                 'locales' => $site->locales,
             ] : null,
@@ -154,9 +195,12 @@ final class AuthoringGuideService
             $md .= "- **Name:** {$site->name}\n";
             $md .= '- **Primary language:** ' . $site->primaryLocale . " — this drives `<html lang>` and the hreflang `x-default`. Confirm it is correct.\n";
             $md .= "- **Additional locales:** {$locales}\n";
-            $md .= '- **Base URL:** ' . ($site->baseUrl !== '' ? $site->baseUrl : '(not set)') . " (apex — never link the www. host)\n";
+            $md .= '- **Base URL:** ' . ($site->canonicalBaseUrl() !== '' ? $site->canonicalBaseUrl() : '(not set)')
+                . ' — this site\'s canonical host is **' . ($site->canonicalHost === 'www' ? 'www' : 'the apex (no www.)') . "**. Never link the other host form; it only exists to 301 here.\n";
             $md .= "- **Embed an image:** `<img data-media-id=\"N\" alt=\"…\">` (upload it first)\n";
             $md .= "- **Embed a component:** `<div data-fs-component=\"handle\" data-values='{…}'></div>`\n";
+            $md .= "- **Embed a form:** `<div data-fs-form=\"handle\"></div>` — define the form first (`upsert_form`); never author `<form>`/`<input>` markup, the sanitizer strips it.\n";
+            $md .= "- **Structured fields:** send `intro`, `tldr`, `conclusion` (HTML fragments) alongside `body_html` — the shell renders them as styled boxes; never bake them into the body.\n";
             if ($site->locales !== []) {
                 $md .= "- **Place the language switcher:** it is never inserted automatically — put `<!--fs:languages-->` (or `<li data-fs-languages></li>`) where you want it and the engine renders a zero-JS dropdown there. `get_language_switcher` returns the markers, the rendered markup, and a customizable Twig variant.\n";
             }

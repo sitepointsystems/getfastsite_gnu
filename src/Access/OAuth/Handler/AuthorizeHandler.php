@@ -10,7 +10,7 @@ use Fastsite\Http\EngineView;
 use Fastsite\Identity\Service\SessionService;
 use Fastsite\Shared\Crypto\TokenCipher;
 use Fastsite\Shared\Http\ApiResponse;
-use Nyholm\Psr7\Response;
+use GuzzleHttp\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;

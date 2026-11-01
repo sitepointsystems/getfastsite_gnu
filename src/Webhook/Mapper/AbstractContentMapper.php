@@ -26,13 +26,21 @@ abstract class AbstractContentMapper implements WebhookMapper
             'title' => (string) ($payload['title'] ?? ''),
             'slug' => (string) ($payload['slug'] ?? ''),
             'body_html' => (string) ($payload['body_html'] ?? ''),
+            'intro' => (string) ($payload['intro'] ?? ''),
+            'tldr' => (string) ($payload['tldr'] ?? ''),
+            'conclusion' => (string) ($payload['conclusion'] ?? ''),
             'excerpt' => (string) ($payload['excerpt'] ?? ''),
             'status' => (string) ($payload['status'] ?? 'published'),
             'seo_title' => (string) ($payload['seo_title'] ?? ''),
             'seo_description' => (string) ($payload['seo_description'] ?? ''),
             'author_name' => (string) ($payload['author'] ?? $payload['author_name'] ?? ''),
-            'sanitize' => $payload['sanitize'] ?? true,
         ];
+        // Only forward an EXPLICIT payload choice — omitting the key lets the
+        // site-wide default decide, so a trusted-port site does not have to
+        // make every sender repeat sanitize:false.
+        if (\array_key_exists('sanitize', $payload)) {
+            $input['sanitize'] = $payload['sanitize'];
+        }
         if (isset($payload['source_ref'])) {
             $input['source'] = 'webhook';
             $input['source_ref'] = (string) $payload['source_ref'];

@@ -8,7 +8,7 @@ use Fastsite\Shared\Http\ApiResponse;
 use Fastsite\Shell\Service\ShellNotFoundException;
 use Fastsite\Shell\Service\ShellService;
 use Fastsite\Site\Repository\SiteRepository;
-use Nyholm\Psr7\Response;
+use GuzzleHttp\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;

@@ -22,6 +22,9 @@ final class ContentScreenHandler implements RequestHandlerInterface
         private readonly ContentRepository $content,
         private readonly SiteDatabaseManager $databases,
         private readonly \Fastsite\FactCheck\FactCheckService $factCheck,
+        private readonly \Fastsite\Seo\SeoLengthService $seoLengths,
+        private readonly \Fastsite\Ai\AiClientFactory $ai,
+        private readonly \Fastsite\Category\Repository\CategoryRepository $categories,
     ) {
     }
 
@@ -36,9 +39,12 @@ final class ContentScreenHandler implements RequestHandlerInterface
         $type = ($query['type'] ?? 'post') === 'page' ? 'page' : 'post';
         $trash = isset($query['trash']);
         $page = max(1, (int) ($query['page'] ?? 1));
+        // Free-text filter over title/slug/excerpt/SEO/body — the fields you
+        // remember a page by when the list is longer than one screen.
+        $search = trim((string) ($query['q'] ?? ''));
         $result = $trash
-            ? ['items' => $this->content->listTrashed($site->handle, $type), 'total' => 0]
-            : $this->content->listFiltered($site->handle, $type, null, $page, 25);
+            ? ['items' => $this->content->listTrashed($site->handle, $type, $search), 'total' => 0]
+            : $this->content->listFiltered($site->handle, $type, null, $page, 25, $search);
 
         // Per-locale translation status per row: locale => translated|stale|missing|manual.
         $translations = [];
@@ -78,7 +84,24 @@ final class ContentScreenHandler implements RequestHandlerInterface
             // Optional — never blank the editor.
         }
 
+        // Post categories: the editor's select and the Categories card.
+        $categories = [];
+        $categoryCounts = [];
+        $editingCategory = null;
+        try {
+            $categories = $this->categories->all($site->handle);
+            $categoryCounts = $this->categories->publishedPostCounts($site->handle);
+            if (($query['category'] ?? '') !== '') {
+                $editingCategory = $this->categories->findBySlug($site->handle, (string) $query['category']);
+            }
+        } catch (\Throwable) {
+            // A site DB not yet migrated must not blank the content list.
+        }
+
         return $this->dash->render($request, 'content.html.twig', [
+            'categories' => $categories,
+            'category_counts' => $categoryCounts,
+            'editing_category' => $editingCategory,
             'title' => $site->name . ' content — fastsite',
             'site' => $site,
             'type' => $type,
@@ -86,6 +109,7 @@ final class ContentScreenHandler implements RequestHandlerInterface
             'total' => $result['total'],
             'page' => $page,
             'pages' => (int) ceil($result['total'] / 25),
+            'search' => $search,
             'translations' => $translations,
             'editing' => $editing,
             'creating' => isset($query['new']),
@@ -93,6 +117,9 @@ final class ContentScreenHandler implements RequestHandlerInterface
             'fact_check_report' => $factCheckReport,
             'fact_check_configured' => $this->factCheck->isConfigured($site),
             'fact_check_model' => $this->factCheck->model($site),
+            // Google/Yoast snippet-length audit (static scan, no AI call).
+            'seo_issues' => $this->seoLengths->scan($site),
+            'seo_ai' => $this->ai->seoRewriterForSite($site)->isConfigured(),
             'fact_check_show' => ($query['fc'] ?? '') === 'report' && $factCheckReport !== null,
         ]);
     }

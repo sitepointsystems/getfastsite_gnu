@@ -9,8 +9,10 @@ use Fastsite\Shared\Database\SiteDatabaseManager;
 
 /**
  * Teams (#2): create a team, invite people by email (tokenized link), and let
- * them join. Site access flows from team membership — see Dash::sitesFor and
- * McpTools::canAccess, which both union team_members with site_users.
+ * them join. THE access model: a site is reached either by its OWNER
+ * (site_users role 'owner' — the creator) or through the team it is attached
+ * to — see Dash::scopeToUser and McpTools::canAccess. There is no per-user
+ * site grant besides ownership.
  */
 final class TeamService
 {
@@ -77,6 +79,35 @@ final class TeamService
         );
     }
 
+    /**
+     * Pending, unexpired invites addressed to this email — what a logged-in
+     * user sees on /teams even when the invite link never reached them
+     * (mail is not part of the engine; the link is normally shared manually).
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function invitesForEmail(string $email): array
+    {
+        return $this->databases->engine()->fetchAllAssociative(
+            'SELECT ti.id, ti.token, ti.expires_at, t.name AS team_name, u.email AS invited_by_email
+             FROM team_invites ti
+             JOIN teams t ON t.id = ti.team_id
+             LEFT JOIN users u ON u.id = ti.invited_by
+             WHERE ti.email = ? AND ti.accepted_at IS NULL AND ti.expires_at >= ?
+             ORDER BY ti.id DESC',
+            [mb_strtolower(trim($email)), $this->clock->iso()],
+        );
+    }
+
+    /** Count variant of invitesForEmail — the nav badge on every dashboard page. */
+    public function pendingInviteCount(string $email): int
+    {
+        return (int) $this->databases->engine()->fetchOne(
+            'SELECT COUNT(*) FROM team_invites WHERE email = ? AND accepted_at IS NULL AND expires_at >= ?',
+            [mb_strtolower(trim($email)), $this->clock->iso()],
+        );
+    }
+
     public function isOwner(int $teamId, int $userId): bool
     {
         return (bool) $this->databases->engine()->fetchOne(
@@ -122,11 +153,32 @@ final class TeamService
      */
     public function accept(string $token, int $userId): string
     {
-        $db = $this->databases->engine();
-        $invite = $db->fetchAssociative('SELECT * FROM team_invites WHERE token = ?', [$token]);
+        $invite = $this->databases->engine()->fetchAssociative('SELECT * FROM team_invites WHERE token = ?', [$token]);
         if ($invite === false) {
             throw new \InvalidArgumentException('This invite link is not valid.');
         }
+
+        return $this->acceptRow($invite, $userId);
+    }
+
+    /**
+     * Accept an invite by id — only valid for the user whose email it was
+     * addressed to (the /teams "Invitations for you" list). Returns the team name.
+     */
+    public function acceptForUser(int $inviteId, int $userId, string $userEmail): string
+    {
+        $invite = $this->databases->engine()->fetchAssociative('SELECT * FROM team_invites WHERE id = ?', [$inviteId]);
+        if ($invite === false || (string) $invite['email'] !== mb_strtolower(trim($userEmail))) {
+            throw new \InvalidArgumentException('This invite is not valid.');
+        }
+
+        return $this->acceptRow($invite, $userId);
+    }
+
+    /** @param array<string, mixed> $invite */
+    private function acceptRow(array $invite, int $userId): string
+    {
+        $db = $this->databases->engine();
         if ($invite['accepted_at'] !== null) {
             throw new \InvalidArgumentException('This invite has already been used.');
         }

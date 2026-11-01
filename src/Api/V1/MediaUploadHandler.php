@@ -16,9 +16,13 @@ use Psr\Http\Message\UploadedFileInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 
 /**
- * Accepts a multipart file upload (field `file`) OR a JSON body with
- * `url` (SSRF-guarded import). alt is required for images unless
- * decorative=true.
+ * Accepts a multipart file upload (field `file`), a JSON body with `data`
+ * (base64-encoded bytes, optionally a `data:` URI, plus an optional
+ * `filename`), OR a JSON body with `url` (SSRF-guarded import). All three
+ * land in the same library through the same pipeline. An image's alt is
+ * taken as given; when omitted (and not decorative) it is generated
+ * automatically — vision AI when the site has an AI credential, else
+ * derived from the filename.
  */
 final class MediaUploadHandler implements RequestHandlerInterface
 {
@@ -82,9 +86,20 @@ final class MediaUploadHandler implements RequestHandlerInterface
         }
 
         $body = ApiHelpers::jsonBody($request);
+        $data = (string) ($body['data'] ?? '');
+        if (trim($data) !== '') {
+            return $this->media->ingestBase64(
+                $site,
+                $data,
+                (string) ($body['filename'] ?? ''),
+                (string) ($body['alt'] ?? ''),
+                (bool) ($body['decorative'] ?? false),
+            );
+        }
+
         $url = trim((string) ($body['url'] ?? ''));
         if ($url === '') {
-            throw new \InvalidArgumentException('Provide a multipart `file` or a JSON `url`.');
+            throw new \InvalidArgumentException('Provide a multipart `file`, a JSON `data` (base64), or a JSON `url`.');
         }
 
         return $this->media->importFromUrl(

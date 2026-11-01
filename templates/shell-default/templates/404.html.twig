@@ -1,11 +1,33 @@
 {% extends 'base.html.twig' %}
 
+{#
+  Two branches, and the `else` is the one every site starts on.
+
+  With an error content row (Site Settings → Errors), `content.body_html` is a
+  real editable page — components, media, a form, whatever the owner put there
+  — and the title comes from the row, so it is translated like any other page.
+  Without one, the engine supplies the title and this falls back to the i18n
+  strings, which is exactly what the shell shipped before error rows existed.
+  Never assume `content` is set: a site with no 404 row renders through here,
+  and so does the shell dry-run.
+
+  The "back" link uses THIS page's locale root, not `/`. A Danish visitor who
+  lands on dk/404.html should be sent to the Danish front page, not bounced to
+  English — which is what the hardcoded `/` used to do.
+#}
+{% set locale_home = site.locale == site.primary_locale ? '/' : '/' ~ site.locale ~ '/' %}
+
 {% block main %}
 <section class="section">
   <div class="wrap reading center">
-    <h1>404</h1>
-    <p>{{ t('not_found') }}</p>
-    <p><a class="button" href="/">{{ t('back_home') }}</a></p>
+    {% if content %}
+      <h1>{{ page.error_status|default(404) }}</h1>
+      {{ content.body_html|raw }}
+    {% else %}
+      <h1>404</h1>
+      <p>{{ t('not_found') }}</p>
+      <p><a class="button" href="{{ locale_home }}">{{ t('back_home') }}</a></p>
+    {% endif %}
   </div>
 </section>
 {% endblock %}

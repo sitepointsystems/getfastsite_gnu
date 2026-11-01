@@ -66,8 +66,8 @@ final class BackupTest extends TestCase
         $componentRenderer = new ComponentRenderer(new DbalComponentRepository($this->databases, $clock), $this->databases, new NullLogger(), $appRoot);
 
         $this->sites = new SiteService($siteRepo, $this->databases, $migrator, $clock, new NullLogger(), $appRoot);
-        $this->content = new ContentService($contentRepo, new ContentSanitizer(), $clock);
-        $this->build = new BuildService($contentRepo, $this->databases, $clock, new NullLogger(), new MediaRenderer($mediaRepo), $translationRepo, $componentRenderer, new \Fastsite\Build\Figlet\FigletRenderer(), new \Fastsite\Build\Service\FileRenderer($mediaRepo, $this->databases, new NullLogger(), $appRoot), $mediaRepo, new \Fastsite\Site\Service\SiteScriptService($this->databases, $clock));
+        $this->content = new ContentService($contentRepo, new ContentSanitizer(), $clock, $mediaRepo);
+        $this->build = new BuildService($contentRepo, $this->databases, $clock, new NullLogger(), new MediaRenderer($mediaRepo), $translationRepo, $componentRenderer, new \Fastsite\Build\Figlet\FigletRenderer(), new \Fastsite\Build\Service\FileRenderer($mediaRepo, $this->databases, new NullLogger(), $appRoot), $mediaRepo, new \Fastsite\Site\Service\SiteScriptService($this->databases, $clock), new \Fastsite\Build\Service\HtaccessBuilder(), new \Fastsite\Component\Service\ComponentHookService($this->databases, $clock, new \Fastsite\Component\Repository\DbalComponentRepository($this->databases, $clock)), new \Fastsite\Form\Service\FormRenderer(new \Fastsite\Form\Service\FormService($this->databases, $clock), "https://engine.test"));
         $this->queue = new JobQueue($this->databases, $this->redis, $clock);
         $this->backups = new BackupService(
             $this->databases,

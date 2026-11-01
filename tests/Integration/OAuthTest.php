@@ -164,6 +164,31 @@ final class OAuthTest extends TestCase
         self::assertNull(\Fastsite\Identity\Service\SessionService::sessionIdFromCookies(['__Host-fsid' => 'not-hex'], true));
     }
 
+    public function testAdminScopeIsCappedByUserRole(): void
+    {
+        // 'admin' implies every scope in AccessContext, so a token minted for
+        // a non-admin user must never carry it — no matter what the client
+        // requested and the user consented to.
+        $clock = new SystemClock();
+        $editorId = (new UserService($this->databases, $clock))->createUser('ed@example.com', 'a-long-password', 'Ed', 'editor');
+
+        $client = $this->oauth->registerClient('Greedy', ['https://app.example.com/cb']);
+        $verifier = rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
+        $challenge = rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '=');
+
+        $code = $this->oauth->issueCode($client['client_id'], $editorId, ['admin', 'content:write'], $challenge, 'https://app.example.com/cb');
+        $tokens = $this->oauth->exchangeCode($code, $verifier, $client['client_id'], 'https://app.example.com/cb');
+        $access = $this->oauth->verifyAccessToken($tokens['access_token']);
+        self::assertNotNull($access);
+        self::assertFalse($access->hasScope('admin'));
+        self::assertTrue($access->hasScope('content:write'));
+
+        // The real admin keeps it.
+        $code = $this->oauth->issueCode($client['client_id'], $this->userId, ['admin'], $challenge, 'https://app.example.com/cb');
+        $tokens = $this->oauth->exchangeCode($code, $verifier, $client['client_id'], 'https://app.example.com/cb');
+        self::assertTrue($this->oauth->verifyAccessToken($tokens['access_token'])?->hasScope('admin'));
+    }
+
     public function testConsentMemory(): void
     {
         $client = $this->oauth->registerClient('C', ['https://a.example.com/cb']);

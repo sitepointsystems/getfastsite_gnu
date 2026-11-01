@@ -13,7 +13,7 @@ final class NullTranslator implements Translator
 {
     public function translate(string $content, string $fromLocale, string $toLocale, string $format = 'html'): string
     {
-        throw new TranslationException('No translation provider configured (set ENDPOINTR_URL and ENDPOINTR_KEY).');
+        throw new TranslationException('No translation provider configured (set ENDPOINTR_URL and ENDPOINTR_KEY).', transport: true);
     }
 
     public function isConfigured(): bool

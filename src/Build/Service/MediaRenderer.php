@@ -11,8 +11,10 @@ use Fastsite\Media\Repository\MediaRepository;
 /**
  * Expands body HTML at build time: every <img data-media-id> becomes a
  * <picture> with AVIF/WebP srcsets, explicit width/height (no CLS), sizes,
- * and lazy/async loading. The featured image is emitted eager with a high
- * fetch priority and contributes a <link rel=preload> for LCP.
+ * and lazy/async loading. The page's LCP image — the featured image, whether
+ * rendered as featured_html or authored in the body, else the first
+ * hero-sized body image — is emitted eager with a high fetch priority and
+ * contributes a <link rel=preload>.
  *
  * This is where the PageSpeed-100 image contract is produced; PageAudit
  * asserts the same variant set the sharp pipeline guarantees.
@@ -25,14 +27,32 @@ final class MediaRenderer
     /** Card thumbnails sit in a grid — roughly one column on phones, ~360px in the grid. */
     private const CARD_SIZES = '(max-width: 700px) 100vw, 360px';
 
+    /**
+     * Source width from which an image counts as hero-sized for the
+     * auto-priority pass: wide enough that it is almost certainly a hero /
+     * full-column visual rather than an icon or inline illustration.
+     */
+    private const PRIORITY_MIN_WIDTH = 1000;
+
     public function __construct(private readonly MediaRepository $repository)
     {
     }
 
     /**
+     * When $featuredMediaId is set, the FIRST body occurrence of that image
+     * renders eager + fetchpriority=high and yields the returned preload —
+     * a hero authored in the body is the page's LCP no matter whether the
+     * shell also renders featured_html, and Lighthouse fails a lazy LCP
+     * outright. With no featured id and $autoPriority on (the main body,
+     * never fragments), the first hero-sized image in document order is
+     * prioritised instead: it is the LCP in the overwhelming majority of
+     * layouts, and a wrong guess on a zero-JS page costs only an early fetch
+     * of an image the page ships anyway. An explicit featured_media_id
+     * always overrides the guess.
+     *
      * @return array{html: string, preload: string|null, media_ids: list<int>}
      */
-    public function expandBody(string $site, string $html): array
+    public function expandBody(string $site, string $html, ?int $featuredMediaId = null, bool $autoPriority = false): array
     {
         $ids = $this->collectMediaIds($html);
         if ($ids === []) {
@@ -42,9 +62,10 @@ final class MediaRenderer
         $media = $this->repository->loadManyWithVariants($site, $ids);
 
         $dropped = false;
+        $priority = null; // at most ONE image per body carries fetchpriority=high
         $expanded = preg_replace_callback(
             '/<img\b[^>]*\bdata-media-id="(\d+)"[^>]*>/i',
-            function (array $m) use ($media, &$dropped): string {
+            function (array $m) use ($media, $featuredMediaId, $autoPriority, &$dropped, &$priority): string {
                 $id = (int) $m[1];
                 $item = $media[$id] ?? null;
                 if ($item === null || $item->status !== 'ready') {
@@ -53,7 +74,17 @@ final class MediaRenderer
                     return ''; // dangling reference — drop it rather than ship a broken img
                 }
 
-                return $this->picture($item, eager: false);
+                $eager = false;
+                if ($priority === null) {
+                    $eager = $featuredMediaId !== null
+                        ? $id === $featuredMediaId
+                        : ($autoPriority && ($item->width ?? 0) >= self::PRIORITY_MIN_WIDTH);
+                    if ($eager) {
+                        $priority = $item;
+                    }
+                }
+
+                return $this->picture($item, eager: $eager);
             },
             $html,
         ) ?? $html;
@@ -71,7 +102,11 @@ final class MediaRenderer
             }
         }
 
-        return ['html' => $expanded, 'preload' => null, 'media_ids' => $rendered];
+        return [
+            'html' => $expanded,
+            'preload' => $priority !== null ? $this->preloadLink($priority) : null,
+            'media_ids' => $rendered,
+        ];
     }
 
     /**

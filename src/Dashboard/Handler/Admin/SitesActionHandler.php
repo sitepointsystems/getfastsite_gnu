@@ -45,6 +45,7 @@ final class SitesActionHandler implements RequestHandlerInterface
                         trim((string) ($body['url'] ?? '')),
                         trim((string) ($body['repo'] ?? '')),
                         trim((string) ($body['locale'] ?? '')) ?: 'en',
+                        (int) $this->dash->user($request)['id'],
                     );
 
                     return $this->dash->redirect('/admin/sites', 'Site "' . $site->handle . '" created — shell scaffolded, DB migrated.');

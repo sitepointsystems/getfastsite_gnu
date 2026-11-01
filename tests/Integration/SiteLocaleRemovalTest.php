@@ -38,7 +38,7 @@ final class SiteLocaleRemovalTest extends TestCase
         $migrator->migrate($this->databases->engine(), $appRoot . '/migrations/engine');
 
         $this->sites = new SiteService(new DbalSiteRepository($this->databases, $clock), $this->databases, $migrator, $clock, new NullLogger(), $appRoot);
-        $this->content = new ContentService(new DbalContentRepository($this->databases, $clock), new ContentSanitizer(), $clock);
+        $this->content = new ContentService(new DbalContentRepository($this->databases, $clock), new ContentSanitizer(), $clock, new \Fastsite\Media\Repository\DbalMediaRepository($this->databases, $clock));
     }
 
     protected function tearDown(): void

@@ -20,6 +20,7 @@ final class GitPublisher
     public function __construct(
         private readonly SiteDatabaseManager $databases,
         private readonly LoggerInterface $logger,
+        private readonly SecretScanner $secrets,
         private readonly string $authorName,
         private readonly string $authorEmail,
         private readonly string $githubToken = '',
@@ -47,9 +48,9 @@ final class GitPublisher
         $this->syncTree($buildDir, $repoDir);
         $tick();
 
-        // Never push secrets into a public dist repo — the conzent IP-leak
+        // Never push secrets into a public dist repo — the prior IP-leak
         // lesson. Scan the staged working tree BEFORE the commit.
-        $this->assertNoSecrets($repoDir);
+        $this->secrets->assertNoSecrets($repoDir);
         $tick();
 
         $this->git($site, $repoDir, ['add', '-A']);
@@ -120,8 +121,8 @@ final class GitPublisher
      */
     private function syncTree(string $source, string $target): void
     {
-        $sourceFiles = $this->relativeFiles($source);
-        $targetFiles = $this->relativeFiles($target, skipGit: true);
+        $sourceFiles = $this->secrets->relativeFiles($source);
+        $targetFiles = $this->secrets->relativeFiles($target, skipGit: true);
 
         foreach ($sourceFiles as $relative) {
             $from = $source . '/' . $relative;
@@ -140,101 +141,6 @@ final class GitPublisher
         }
 
         Dirs::pruneEmpty($target);
-    }
-
-    /**
-     * @return list<string>
-     */
-    private function relativeFiles(string $root, bool $skipGit = false): array
-    {
-        if (!is_dir($root)) {
-            return [];
-        }
-
-        $files = [];
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveCallbackFilterIterator(
-                new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS),
-                static fn (\SplFileInfo $f): bool => !($skipGit && $f->getFilename() === '.git'),
-            ),
-        );
-
-        foreach ($iterator as $file) {
-            \assert($file instanceof \SplFileInfo);
-            if ($file->isFile()) {
-                $files[] = str_replace('\\', '/', substr($file->getPathname(), \strlen($root) + 1));
-            }
-        }
-
-        sort($files);
-
-        return $files;
-    }
-
-    /**
-     * Pre-push secret guard (the conzent IP-leak lesson). A PEM private key
-     * is unambiguous and ALWAYS blocks the publish. The shape-based patterns
-     * (API keys, AWS ids, env assignments) block only on engine-generated
-     * deploy artifacts (_headers, _redirects, robots.txt, sitemaps) where a
-     * secret is a pure pipeline bug — on RENDERED CONTENT PAGES they only
-     * WARN, because a blog post may legitimately mention "APP_SECRET=" or an
-     * fs_-shaped string and content must never wedge the pipeline.
-     */
-    private function assertNoSecrets(string $repoDir): void
-    {
-        // Unencrypted + encrypted PEM private-key headers; never legitimate
-        // in shipped output, so this one blocks everywhere.
-        $pemPattern = '/-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP |ENCRYPTED |SSH2 ENCRYPTED )?PRIVATE KEY-----/';
-        // Anchor-free so a minified/embedded assignment is still caught; the
-        // 8+ char value cuts noise. Applied only to non-content files.
-        $shapePatterns = [
-            'fastsite API key' => '/fs_[A-Za-z0-9]{8}_[A-Za-z0-9]{16,}/',
-            'AWS access key id' => '/\bAKIA[0-9A-Z]{16}\b/',
-            'env secret assignment' => '/(?:APP_SECRET|R2_SECRET_KEY|ENDPOINTR_KEY|GITHUB_TOKEN|REDIS_URL)\s*[=:]\s*["\']?\S{8,}/i',
-        ];
-        // AWS publishes this exact key in its own docs; never a real secret.
-        $awsExample = 'AKIAIOSFODNN7EXAMPLE';
-
-        foreach ($this->relativeFiles($repoDir, skipGit: true) as $relative) {
-            $ext = strtolower(pathinfo($relative, PATHINFO_EXTENSION));
-            if (\in_array($ext, ['avif', 'webp', 'jpg', 'jpeg', 'png', 'gif', 'svg', 'woff2', 'woff', 'ico', 'mp4', 'webm', 'zip', 'pdf'], true)) {
-                continue; // binary/media can't carry a readable secret
-            }
-            $content = (string) @file_get_contents($repoDir . '/' . $relative);
-            if ($content === '') {
-                continue;
-            }
-
-            if (preg_match($pemPattern, $content) === 1) {
-                throw new \RuntimeException(sprintf(
-                    'Pre-push secret scan aborted the publish: private key material in build output "%s". Nothing was pushed.',
-                    $relative,
-                ));
-            }
-
-            $isContentPage = $ext === 'html' || $ext === 'htm';
-            foreach ($shapePatterns as $label => $pattern) {
-                if ($label === 'AWS access key id' && str_contains($content, $awsExample)) {
-                    continue; // documented example, not a real key
-                }
-                if (preg_match($pattern, $content) !== 1) {
-                    continue;
-                }
-                if ($isContentPage) {
-                    // Content must never wedge the pipeline — log and move on.
-                    $this->logger->warning('Pre-push secret scan: suspicious string on a content page (published anyway)', [
-                        'file' => $relative,
-                        'pattern' => $label,
-                    ]);
-                    continue;
-                }
-                throw new \RuntimeException(sprintf(
-                    'Pre-push secret scan aborted the publish: possible %s in engine output "%s". Nothing was pushed.',
-                    $label,
-                    $relative,
-                ));
-            }
-        }
     }
 
     private function hasRemote(Site $site, string $repoDir): bool

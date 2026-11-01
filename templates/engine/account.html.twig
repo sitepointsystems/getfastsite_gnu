@@ -14,6 +14,29 @@
 <div class="grid2">
   <div>
     <div class="card">
+      <h2 style="margin-top:0">Profile image</h2>
+      <div style="display:flex;gap:1rem;align-items:center">
+        <span class="savatar" style="width:3.2rem;height:3.2rem;border-radius:50%;font-size:1.3rem;border:1px solid var(--border)">{{ (user.name|default(user.email))|first|upper }}{% if avatar_url %}<img src="{{ avatar_url }}" alt="" onerror="this.remove()">{% endif %}</span>
+        <div style="flex:1">
+          <form method="post" action="/account/action" enctype="multipart/form-data" class="row" style="align-items:center">
+            <input type="hidden" name="_csrf" value="{{ csrf }}">
+            <input type="hidden" name="action" value="avatar-upload">
+            <div><input type="file" name="avatar" accept="image/jpeg,image/png,image/webp" required></div>
+            <div class="tight"><button class="button small" type="submit">Upload</button></div>
+          </form>
+          <p class="mut" style="font-size:.8rem;margin:.4rem 0 0">JPEG, PNG or WebP, up to 2&nbsp;MB. Shown as your avatar in the sidebar.</p>
+        </div>
+        {% if avatar_url %}
+        <form method="post" action="/account/action" class="inline">
+          <input type="hidden" name="_csrf" value="{{ csrf }}">
+          <input type="hidden" name="action" value="avatar-remove">
+          <button class="button small ghost" type="submit">Remove</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card">
       <h2 style="margin-top:0">Password</h2>
       <form method="post" action="/account/action">
         <input type="hidden" name="_csrf" value="{{ csrf }}">
@@ -99,6 +122,35 @@
         .scopes-pick label:has(input:checked){background:var(--accent);border-color:var(--accent);color:#04121a;font-weight:600}
         .scopes-pick .mono{font-size:.82rem}
       </style>
+      {% if edit_key %}
+      {# Editing reuses the create form's picker markup, prefilled, and REPLACES
+         that form rather than sitting beside it: two scope grids on one screen
+         is an invitation to fill in the wrong one. Opened by ?key={id}, the
+         server-rendered panel convention the Components (?component=) and
+         Media (?crop=) screens already use. #}
+      <form method="post" action="/account/action">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="key-scopes">
+        <input type="hidden" name="key_id" value="{{ edit_key.id }}">
+        <label>Scopes for <strong>{{ edit_key.name }}</strong>
+          <span class="mut">— fs_{{ edit_key.key_id }}_… keeps working; only what it may do changes</span></label>
+        {% set current = edit_key.scopes|json_list %}
+        <div class="scopes-pick">
+          {% for scope, desc in scope_catalog %}
+            {% if scope != 'admin' or user.role == 'admin' %}
+            <label title="{{ desc }}">
+              <input type="checkbox" name="scopes[]" value="{{ scope }}" {{ scope in current ? 'checked' }}>
+              <span class="mono">{{ scope }}</span>
+            </label>
+            {% endif %}
+          {% endfor %}
+        </div>
+        <div class="row" style="margin-top:.8rem">
+          <div class="tight"><button class="button" type="submit">Save scopes</button></div>
+          <div class="tight"><a class="button ghost" href="/account">Cancel</a></div>
+        </div>
+      </form>
+      {% else %}
       <form method="post" action="/account/action">
         <input type="hidden" name="_csrf" value="{{ csrf }}">
         <input type="hidden" name="action" value="key-create">
@@ -120,16 +172,18 @@
           <div class="tight"><button class="button" type="submit">Create key</button></div>
         </div>
       </form>
+      {% endif %}
       <table style="margin-top:1rem">
         <tr><th>Name</th><th>Key</th><th>Scopes</th><th>Status</th><th></th></tr>
         {% for k in keys %}
         <tr>
           <td>{{ k.name }}</td>
           <td class="mono">fs_{{ k.key_id }}_…</td>
-          <td class="mut" style="max-width:12rem">{{ k.scopes }}</td>
+          <td>{% include '_chiplist.html.twig' with {items: k.scopes|json_list} only %}</td>
           <td>{% if k.revoked_at %}<span class="badge revoked">revoked</span>{% else %}<span class="badge ok">active</span>{% endif %}</td>
           <td>
             {% if not k.revoked_at %}
+            <a class="button small ghost" href="/account?key={{ k.id }}">Edit</a>
             <form method="post" action="/account/action" class="inline">
               <input type="hidden" name="_csrf" value="{{ csrf }}">
               <input type="hidden" name="action" value="key-revoke">
@@ -158,7 +212,7 @@
       <form method="post" action="/account/action" class="row">
         <input type="hidden" name="_csrf" value="{{ csrf }}">
         <input type="hidden" name="action" value="github-add">
-        <div><label>Label</label><input type="text" name="label" placeholder="rexultz deploy" required></div>
+        <div><label>Label</label><input type="text" name="label" placeholder="production deploy" required></div>
         <div><label>Token</label><input type="password" name="token" placeholder="github_pat_…" autocomplete="off" required></div>
         <div class="tight" style="align-self:end"><button class="button" type="submit">Save</button></div>
       </form>
@@ -185,13 +239,15 @@
     {% macro model_opts(options, selected) %}{% for m in options %}<option value="{{ m }}" {{ m == selected ? 'selected' }}>{{ m }}</option>{% endfor %}{% endmacro %}
     <div class="card">
       <h2 style="margin-top:0">OpenRouter keys</h2>
-      <p class="mut" style="font-size:.85rem">Your <strong>OpenRouter</strong> API keys power the AI features (translation, fact-checking, auto-correct, topic research). Stored encrypted — only the first and last characters are shown. Get one at <span class="mono">openrouter.ai → Keys</span>, then select it per site in Settings. Pick the models for chat/translation, fact-checking, and research.</p>
+      <p class="mut" style="font-size:.85rem">Your <strong>OpenRouter</strong> API keys power the AI features (translation, fact-checking, auto-correct, topic research). Stored encrypted — only the first and last characters are shown. Get one at <span class="mono">openrouter.ai → Keys</span>, then select it per site in Settings.</p>
+      <p class="mut" style="font-size:.85rem"><strong>Translation gets its own model</strong>, and it is worth setting: translating one site into nine languages is over a thousand calls, so this is the model that decides both the bill and whether you hit a rate limit. A fast cheap model (Gemini Flash, GPT-4o-mini, Claude Haiku) handles translation well — Sonnet and Opus are wasted on it. The <em>Model</em> below covers everything else (auto-correct, alt text, SEO rewrites).</p>
       <form method="post" action="/account/action" class="row">
         <input type="hidden" name="_csrf" value="{{ csrf }}">
         <input type="hidden" name="action" value="ai-add">
         <div><label>Label</label><input type="text" name="label" placeholder="my openrouter" required></div>
         <div><label>API key</label><input type="password" name="key" placeholder="sk-or-…" autocomplete="off" required></div>
         <div><label>Model</label><select name="model">{{ _self.model_opts(or_models, ai_model_default) }}</select></div>
+        <div><label>Translation model</label><select name="translate_model">{{ _self.model_opts(or_models, ai_translate_default) }}</select></div>
         <div><label>Fact-check model</label><select name="factcheck_model">{{ _self.model_opts(or_models, ai_factcheck_default) }}</select></div>
         <div><label>Research model</label><select name="research_model">{{ _self.model_opts(or_models, ai_research_default) }}</select></div>
         <div class="tight" style="align-self:end"><button class="button" type="submit">Save</button></div>
@@ -227,6 +283,8 @@
             <label>Label</label><input type="text" name="label" value="{{ c.label }}" required>
             <label>API key <span class="mut">(leave blank to keep {{ c.key_hint }})</span></label><input type="password" name="key" placeholder="•••• saved — blank keeps it" autocomplete="off">
             <label>Model</label><select name="model">{{ _self.model_opts(or_models, c.model ?: ai_model_default) }}</select>
+            <label>Translation model <span class="mut">(the high-volume one — keep it cheap)</span></label>
+            <select name="translate_model">{{ _self.model_opts(or_models, c.translate_model ?: ai_translate_default) }}</select>
             <label>Fact-check model</label><select name="factcheck_model">{{ _self.model_opts(or_models, c.factcheck_model ?: ai_factcheck_default) }}</select>
             <label>Research model</label><select name="research_model">{{ _self.model_opts(or_models, c.research_model ?: ai_research_default) }}</select>
           </div>

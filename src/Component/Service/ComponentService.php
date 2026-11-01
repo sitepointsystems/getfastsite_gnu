@@ -73,7 +73,17 @@ final class ComponentService
             $variablesSchema = [];
         }
 
-        $warnings = $this->lint($type, $source);
+        // Verbatim = ship the output as authored (scripts and all), wrapped in
+        // data-fs-embed instead of stripped. Omitted on an update = keep the
+        // stored flag, so an agent PUTting only new source can't silently
+        // strip a working widget (the same blank-keeps rule the token fields
+        // use).
+        $existing = $this->repository->findByHandle($site->handle, $handle);
+        $verbatim = \array_key_exists('verbatim', $input)
+            ? filter_var($input['verbatim'], FILTER_VALIDATE_BOOL)
+            : ($existing?->verbatim ?? false);
+
+        $warnings = $this->lint($type, $source, $verbatim);
         $sourceHash = hash('sha256', $type . "\x1f" . $source);
 
         $id = $this->repository->upsert($site->handle, $handle, [
@@ -82,6 +92,7 @@ final class ComponentService
             'css' => $css,
             'variables_schema' => json_encode($variablesSchema, JSON_THROW_ON_ERROR),
             'source_hash' => $sourceHash,
+            'verbatim' => $verbatim ? 1 : 0,
             'warnings' => json_encode(array_values($warnings), JSON_THROW_ON_ERROR),
             'status' => 'pending',
             'error' => null,
@@ -109,6 +120,63 @@ final class ComponentService
         return $this->repository->all($site->handle);
     }
 
+    /** One component with its full source, or null. */
+    public function get(Site $site, string $handle): ?Component
+    {
+        return $this->repository->findByHandle($site->handle, strtolower(trim($handle)));
+    }
+
+    /**
+     * Is this component embedded in any live content body or structured
+     * fragment? Component edits change built pages while no content
+     * timestamp moves, so every write surface republishes when this (or a
+     * hook reference) is true — otherwise "I edited the component and the
+     * site didn't change" until something else happens to publish.
+     */
+    public function referencedByContent(Site $site, string $handle): bool
+    {
+        $handle = strtolower(trim($handle));
+        if ($handle === '' || preg_match(self::HANDLE_PATTERN, $handle) !== 1) {
+            return false;
+        }
+        // Handles are [a-z0-9-] so the LIKE needle needs no wildcard escaping.
+        $needle = '%data-fs-component="' . $handle . '"%';
+
+        try {
+            return (bool) $this->databases->site($site->handle)->fetchOne(
+                "SELECT 1 FROM content
+                 WHERE deleted_at IS NULL AND status = 'published' AND (
+                     body_html LIKE ? OR COALESCE(intro, '') LIKE ?
+                     OR COALESCE(tldr, '') LIKE ? OR COALESCE(conclusion, '') LIKE ?
+                 ) LIMIT 1",
+                [$needle, $needle, $needle, $needle],
+            );
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /**
+     * Fingerprint of every component that can change built pages — bundle
+     * hash + verbatim flag per handle. Feeds the preview staleness signature:
+     * a component edit (or a verbatim toggle) changes the output of pages
+     * whose content rows never moved, which is the documented
+     * preview-serves-the-old-tree bug class. Hook rules have their own
+     * signature; this one covers content-embedded components too.
+     */
+    public function signature(string $siteHandle): string
+    {
+        try {
+            $rows = $this->databases->site($siteHandle)->fetchAllAssociative(
+                'SELECT handle, bundle_hash, verbatim, status FROM components ORDER BY handle',
+            );
+
+            return $rows === [] ? '' : md5(json_encode($rows, JSON_THROW_ON_ERROR));
+        } catch (\Throwable) {
+            return '';
+        }
+    }
+
     /**
      * Removes a component, its cached renders, and any compiled react bundle.
      */
@@ -126,12 +194,25 @@ final class ComponentService
     /**
      * @return list<string>
      */
-    private function lint(string $type, string $source): array
+    private function lint(string $type, string $source, bool $verbatim = false): array
     {
         $warnings = [];
 
+        // A VERBATIM html component's source never executes on the build host
+        // — renderHtml is pure string substitution, and the whole point of the
+        // flag is shipping browser-side script as authored. The escape-
+        // primitive and import checks below exist to protect the build host's
+        // Node render (react) and the zero-JS posture (non-verbatim html), so
+        // for verbatim html they would only reject legitimate browser code:
+        // a pasted widget's `globalThis` guard, a `process.env` shim check, a
+        // dynamic import(). React stays fully linted regardless of the flag —
+        // its source genuinely runs on this machine.
+        if ($type === 'html' && $verbatim) {
+            return $warnings;
+        }
+
         // Reject dangerous imports (both types — html could embed a script,
-        // but the sanitizer strips those; react is bundled so imports matter).
+        // but the renderer strips those; react is bundled so imports matter).
         if (preg_match_all('/(?:import\s[^;]*from\s*|require\s*\(\s*)["\']([^"\']+)["\']/', $source, $m) > 0) {
             foreach ($m[1] as $import) {
                 foreach (self::FORBIDDEN_IMPORTS as $forbidden) {

@@ -6,5 +6,13 @@
     "no_posts_yet": "No posts yet.",
     "read_more": "Read more",
     "not_found": "That page does not exist.",
-    "back_home": "Back to the front page"
+    "back_home": "Back to the front page",
+    "on_this_page": "On this page",
+    "tldr": "TL;DR",
+    "conclusion": "Conclusion",
+    "breadcrumb": "Breadcrumb",
+    "page": "Page",
+    "pagination": "Pages",
+    "previous_page": "Previous",
+    "next_page": "Next"
 }

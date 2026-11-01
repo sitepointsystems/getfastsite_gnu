@@ -44,10 +44,10 @@ final class WalkingSkeletonTest extends TestCase
         $migrator->migrate($this->databases->engine(), $this->appRoot . '/migrations/engine');
 
         $this->sites = new SiteService($siteRepo, $this->databases, $migrator, $clock, new NullLogger(), $this->appRoot);
-        $this->content = new ContentService($contentRepo, new ContentSanitizer(), $clock);
+        $this->content = new ContentService($contentRepo, new ContentSanitizer(), $clock, $mediaRepo);
         $translationRepo = new \Fastsite\Translation\Repository\DbalTranslationRepository($this->databases, $clock);
         $componentRenderer = new \Fastsite\Build\Service\ComponentRenderer(new \Fastsite\Component\Repository\DbalComponentRepository($this->databases, $clock), $this->databases, new NullLogger(), $this->appRoot);
-        $this->build = new BuildService($contentRepo, $this->databases, $clock, new NullLogger(), new \Fastsite\Build\Service\MediaRenderer($mediaRepo), $translationRepo, $componentRenderer, new \Fastsite\Build\Figlet\FigletRenderer(), new \Fastsite\Build\Service\FileRenderer($mediaRepo, $this->databases, new NullLogger(), $this->appRoot), $mediaRepo, new \Fastsite\Site\Service\SiteScriptService($this->databases, $clock));
+        $this->build = new BuildService($contentRepo, $this->databases, $clock, new NullLogger(), new \Fastsite\Build\Service\MediaRenderer($mediaRepo), $translationRepo, $componentRenderer, new \Fastsite\Build\Figlet\FigletRenderer(), new \Fastsite\Build\Service\FileRenderer($mediaRepo, $this->databases, new NullLogger(), $this->appRoot), $mediaRepo, new \Fastsite\Site\Service\SiteScriptService($this->databases, $clock), new \Fastsite\Build\Service\HtaccessBuilder(), new \Fastsite\Component\Service\ComponentHookService($this->databases, $clock, new \Fastsite\Component\Repository\DbalComponentRepository($this->databases, $clock)), new \Fastsite\Form\Service\FormRenderer(new \Fastsite\Form\Service\FormService($this->databases, $clock), "https://engine.test"));
     }
 
     protected function tearDown(): void
@@ -101,6 +101,49 @@ final class WalkingSkeletonTest extends TestCase
                 $page . ' shipped without a meta description',
             );
         }
+    }
+
+    /**
+     * A tag manager is the whole point of site scripts (#13), and the real GTM
+     * pack is more than a <script src>: its body snippet is a <noscript>
+     * <iframe> pointing at googletagmanager.com. PageAudit counted that as an
+     * external fetched resource and FAILed on every emitted page, so the build
+     * — and with it the publish, and the preview — was blocked outright the
+     * moment the operator saved the tag. The injected blocks are trusted,
+     * opted-in markup and are now cut out before the asset checks.
+     */
+    public function testTagManagerScriptDoesNotBlockTheBuild(): void
+    {
+        $site = $this->sites->create('gtmtest', 'GTM Test', 'https://gtm.example.com');
+        $this->content->create($site, [
+            'type' => 'post',
+            'title' => 'A post',
+            'body_html' => '<p>Body.</p>',
+            'status' => 'published',
+        ]);
+
+        $scripts = new \Fastsite\Site\Service\SiteScriptService($this->databases, new SystemClock());
+        $scripts->save($site->handle, [
+            'label' => 'GTM head',
+            'location' => 'head',
+            'code' => '<script>(function(w,d,s,l,i){w[l]=w[l]||[];var f=d.getElementsByTagName(s)[0],'
+                . 'j=d.createElement(s);j.async=true;j.src="https://www.googletagmanager.com/gtm.js?id="+i;'
+                . 'f.parentNode.insertBefore(j,f);})(window,document,"script","dataLayer","GTM-ABC123");</script>',
+        ]);
+        $scripts->save($site->handle, [
+            'label' => 'GTM body',
+            'location' => 'body_open',
+            'code' => '<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-ABC123"'
+                . ' height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>',
+        ]);
+
+        $this->build->build($site);
+
+        $buildDir = $this->dataPath . '/sites/gtmtest/build';
+        $home = (string) file_get_contents($buildDir . '/index.html');
+        self::assertStringContainsString('googletagmanager.com/gtm.js', $home);
+        self::assertStringContainsString('googletagmanager.com/ns.html', $home);
+        self::assertStringContainsString('script-src', (string) file_get_contents($buildDir . '/_headers'));
     }
 
     public function testFullFlow(): void
@@ -163,6 +206,56 @@ final class WalkingSkeletonTest extends TestCase
         self::assertDirectoryDoesNotExist($buildDir . '/blog/' . $post->slug);
     }
 
+    /**
+     * A 410 rule must never become a `_redirects` LINE: Cloudflare Pages
+     * supports 3xx (and a 200 proxy) only, so "/x  410" would be a malformed
+     * rule shipped to the CDN. It goes out as a comment instead.
+     */
+    public function testGoneRuleShipsAsACommentNotARedirectLine(): void
+    {
+        $site = $this->sites->create('gonetest', 'Gone Test', 'https://gone.example.com');
+        $redirects = new \Fastsite\Site\Service\RedirectService($this->databases, new SystemClock());
+        $redirects->save($site->handle, '/retired-page', '', \Fastsite\Site\Service\RedirectService::GONE);
+        $redirects->save($site->handle, '/moved-page', '/blog/', 301);
+
+        $this->build->build($site);
+
+        $file = (string) file_get_contents($this->dataPath . '/sites/gonetest/build/_redirects');
+        self::assertStringContainsString('/moved-page /blog/ 301', $file);
+        self::assertStringNotContainsString('/retired-page /', $file, 'a 410 has no target to emit');
+        foreach (explode("\n", trim($file)) as $line) {
+            self::assertStringNotContainsString(
+                '410',
+                str_starts_with($line, '#') ? '' : $line,
+                'no non-comment line may carry a 410',
+            );
+        }
+        self::assertStringContainsString('# /retired-page 410 Gone', $file, 'the intent is still recorded in the artifact');
+    }
+
+    /**
+     * canonical_host = www flips every absolute URL the build emits to the
+     * www. origin, so the canonical tag agrees with the host-level 301 the
+     * operator configured instead of fighting it.
+     */
+    public function testCanonicalHostWwwMovesEveryAbsoluteUrlToTheWwwOrigin(): void
+    {
+        $site = $this->sites->create('wwwtest', 'WWW Test', 'https://www.wtest.example.com');
+        self::assertSame('https://wtest.example.com', $site->baseUrl, 'base_url is stored apex-normalized');
+
+        $this->content->create($site, ['type' => 'post', 'title' => 'Hello', 'body_html' => '<p>x</p>', 'status' => 'published']);
+        $site = $this->sites->update('wwwtest', ['canonical_host' => 'www']);
+        $this->build->build($site);
+
+        $buildDir = $this->dataPath . '/sites/wwwtest/build';
+        self::assertStringContainsString(
+            '<link rel="canonical" href="https://www.wtest.example.com/blog/hello/">',
+            (string) file_get_contents($buildDir . '/blog/hello/index.html'),
+        );
+        self::assertStringContainsString('https://www.wtest.example.com/blog/hello/', (string) file_get_contents($buildDir . '/sitemap-en.xml'));
+        self::assertStringContainsString('Sitemap: https://www.wtest.example.com/sitemap.xml', (string) file_get_contents($buildDir . '/robots.txt'));
+    }
+
     public function testSlugRenameBackLeavesNoRedirectLoop(): void
     {
         $site = $this->sites->create('looptest', 'Loop Test', 'https://loop.example.com');
@@ -209,7 +302,19 @@ final class WalkingSkeletonTest extends TestCase
         self::assertStringNotContainsString('<', $m[1]);
         $decoded = json_decode(html_entity_decode($m[1]), true);
         self::assertIsArray($decoded);
-        self::assertStringContainsString('alert(1)', (string) $decoded['headline']);
+
+        // The payload survives as TEXT inside the graph (strip_tags leaves the
+        // inner text) — proving the escaping neutralised the markup rather than
+        // the content having been dropped on the floor somewhere.
+        $article = null;
+        foreach ($decoded['@graph'] as $node) {
+            if (($node['@type'] ?? '') === 'BlogPosting') {
+                $article = $node;
+            }
+        }
+        self::assertIsArray($article, 'the post graph carries a BlogPosting node');
+        self::assertStringContainsString('alert(1)', (string) $article['headline']);
+        self::assertStringNotContainsString('<script', (string) $article['headline']);
     }
 
     public function testReservedPageSlugCannotShadowEngineOutput(): void
@@ -323,5 +428,52 @@ final class WalkingSkeletonTest extends TestCase
         }
         $post = (string) file_get_contents($buildDir . '/blog/hello-world/index.html');
         self::assertStringContainsString('<link rel="canonical" href="https://seo.example.com/blog/hello-world/">', $post);
+    }
+
+    /**
+     * Per-content robots flags: noindex/nofollow ship as a head meta tag, and
+     * noindex'd content is excluded from the sitemap and llms.txt (a noindex'd
+     * URL in the sitemap sends crawlers contradictory signals) while still
+     * rendering — it stays reachable on the site itself.
+     */
+    public function testNoindexLeavesSitemapAndCarriesRobotsMeta(): void
+    {
+        $site = $this->sites->create('noidx', 'Noindex Test', 'https://noidx.example.com');
+
+        $this->content->create($site, [
+            'type' => 'post', 'title' => 'Visible', 'body_html' => '<p>x</p>', 'status' => 'published',
+        ]);
+        $this->content->create($site, [
+            'type' => 'post', 'title' => 'Hidden', 'body_html' => '<p>x</p>', 'status' => 'published',
+            'noindex' => true, 'nofollow' => true,
+        ]);
+        $this->content->create($site, [
+            'type' => 'page', 'title' => 'Landing', 'body_html' => '<p>x</p>', 'status' => 'published',
+            'noindex' => true,
+        ]);
+
+        $this->build->build($site);
+        $buildDir = $this->dataPath . '/sites/noidx/build';
+
+        // Both still render — noindex hides from crawlers, not from visitors.
+        self::assertFileExists($buildDir . '/blog/hidden/index.html');
+        self::assertFileExists($buildDir . '/landing/index.html');
+
+        $sitemap = (string) file_get_contents($buildDir . '/sitemap-en.xml');
+        self::assertStringContainsString('https://noidx.example.com/blog/visible/', $sitemap);
+        self::assertStringNotContainsString('/blog/hidden/', $sitemap);
+        self::assertStringNotContainsString('/landing/', $sitemap);
+
+        $hidden = (string) file_get_contents($buildDir . '/blog/hidden/index.html');
+        self::assertStringContainsString('<meta name="robots" content="noindex, nofollow">', $hidden);
+        $landing = (string) file_get_contents($buildDir . '/landing/index.html');
+        self::assertStringContainsString('<meta name="robots" content="noindex">', $landing);
+        $visible = (string) file_get_contents($buildDir . '/blog/visible/index.html');
+        self::assertStringNotContainsString('name="robots"', $visible);
+
+        $llms = (string) file_get_contents($buildDir . '/llms.txt');
+        self::assertStringContainsString('(https://noidx.example.com/blog/visible/)', $llms);
+        self::assertStringNotContainsString('/blog/hidden/', $llms);
+        self::assertStringNotContainsString('/landing/', $llms);
     }
 }

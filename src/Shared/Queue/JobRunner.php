@@ -9,9 +9,13 @@ use Fastsite\Shared\Database\SiteDatabaseManager;
 use Psr\Log\LoggerInterface;
 
 /**
- * The queue worker (bin/fastsite queue:work — exactly ONE process in v1).
+ * The queue worker (bin/fastsite queue:work). Production runs FOUR of these
+ * (supervisord): dedicated lane workers for build / translate / media (each
+ * `--queues=<lane>`) plus a general worker for high/default/low — so an AI
+ * translation backlog or a long image-optimize run can never starve builds.
+ * A flagless worker serves every queue in priority order (dev).
  *
- * Concurrency contract (worker and scheduler run as separate processes):
+ * Concurrency contract (workers and scheduler run as separate processes):
  * every terminal-state UPDATE is guarded by the expected current status,
  * and side effects (chain enqueue, retry delay, logs) only fire when the
  * guarded UPDATE actually claimed the transition. The sweep additionally
@@ -47,8 +51,14 @@ final class JobRunner
     /**
      * Worker loop. Never dies on transient Redis/DB errors (logs + pauses);
      * SIGTERM/SIGINT drain gracefully where pcntl exists (the container).
+     * $queues limits which lanes this worker serves (null = all). The sweep
+     * and delayed promotion stay in EVERY worker regardless of lane — both
+     * are concurrent-safe by construction, and a delayed retry must promote
+     * even with the scheduler down.
+     *
+     * @param list<string>|null $queues
      */
-    public function work(?int $maxRuntimeSeconds = null, bool $once = false): int
+    public function work(?int $maxRuntimeSeconds = null, bool $once = false, ?array $queues = null): int
     {
         $this->installSignalHandlers();
         $started = time();
@@ -58,12 +68,17 @@ final class JobRunner
             try {
                 $this->sweepStaleJobs();
                 $this->queue->promoteDelayed();
+                $this->queue->markWorkerAlive($queues ?? JobQueue::QUEUES);
 
-                $uuid = $this->queue->pop(5);
-                if ($uuid !== null && $this->execute($uuid)) {
-                    ++$processed;
-                    if ($once) {
-                        break;
+                $uuid = $this->queue->pop(5, $queues);
+                if ($uuid !== null) {
+                    $ran = $this->execute($uuid);
+                    $this->releaseSiteConnections();
+                    if ($ran) {
+                        ++$processed;
+                        if ($once) {
+                            break;
+                        }
                     }
                 }
             } catch (\Throwable $e) {
@@ -87,6 +102,30 @@ final class JobRunner
         }
 
         return $processed;
+    }
+
+    /**
+     * Drops the cached site connections between jobs. A `restore_site`
+     * renames site.db aside and a snapshot in, and only the process that ran
+     * it closes its own handle — on Linux every OTHER long-lived process
+     * keeps reading, and WRITING, the displaced inode, with no error and no
+     * lock contention (SQLite locks the file; the two now hold different
+     * files). Nothing recycles these processes either — no worker runs with
+     * --max-runtime — so without this the stale handle survives until the
+     * container restarts. And `restore_site` is enqueued to `high`, a lane
+     * only the general worker serves, so the BUILD worker, the one that next
+     * rebuilds the site, is guaranteed to be a different process.
+     *
+     * Never allowed to throw: a worker that just finished its job correctly
+     * must not die on a close.
+     */
+    private function releaseSiteConnections(): void
+    {
+        try {
+            $this->databases->closeSites();
+        } catch (\Throwable $e) {
+            $this->logger->warning('Could not release site connections after a job', ['error' => $e->getMessage()]);
+        }
     }
 
     /**
@@ -135,7 +174,7 @@ final class JobRunner
         $claimed = $db->executeStatement(
             "UPDATE jobs
              SET status = 'running', attempts = attempts + 1, reserved_by = ?,
-                 started_at = COALESCE(started_at, ?), heartbeat_at = ?
+                 started_at = COALESCE(started_at, ?), heartbeat_at = ?, progress = NULL
              WHERE uuid = ? AND status = 'pending' AND (run_after IS NULL OR run_after <= ?)",
             [$reservedBy, $now, $now, $uuid, $now],
         );
@@ -147,12 +186,20 @@ final class JobRunner
         \assert($row !== false);
         $job = Job::fromRow($row);
 
-        $context = new JobContext(function () use ($db, $uuid): void {
-            $db->executeStatement(
-                "UPDATE jobs SET heartbeat_at = ? WHERE uuid = ? AND status = 'running'",
-                [$this->clock->iso(), $uuid],
-            );
-        });
+        $context = new JobContext(
+            function () use ($db, $uuid): void {
+                $db->executeStatement(
+                    "UPDATE jobs SET heartbeat_at = ? WHERE uuid = ? AND status = 'running'",
+                    [$this->clock->iso(), $uuid],
+                );
+            },
+            function (string $note) use ($db, $uuid): void {
+                $db->executeStatement(
+                    "UPDATE jobs SET progress = ?, heartbeat_at = ? WHERE uuid = ? AND status = 'running'",
+                    [$note, $this->clock->iso(), $uuid],
+                );
+            },
+        );
 
         try {
             $this->handlers->for($job->type)->run($job, $context);
@@ -193,7 +240,7 @@ final class JobRunner
         $db->beginTransaction();
         try {
             $done = $db->executeStatement(
-                "UPDATE jobs SET status = 'done', finished_at = ?, error = NULL
+                "UPDATE jobs SET status = 'done', finished_at = ?, error = NULL, progress = NULL
                  WHERE uuid = ? AND status = 'running'",
                 [$this->clock->iso(), $job->uuid],
             );

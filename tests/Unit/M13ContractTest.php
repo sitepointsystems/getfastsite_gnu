@@ -17,7 +17,7 @@ final class M13ContractTest extends TestCase
     public function testFigletOutputIsPrintableAsciiAndWidthCapped(): void
     {
         $renderer = new FigletRenderer();
-        foreach (['FastSite', 'Rexultz', 'getconzent', 'AB-9.'] as $name) {
+        foreach (['FastSite', 'Northwind', 'examplesite', 'AB-9.'] as $name) {
             $lines = $renderer->renderCentered($name, 78);
             self::assertNotEmpty($lines);
             foreach ($lines as $line) {
@@ -65,7 +65,7 @@ final class M13ContractTest extends TestCase
 
     public function testPageAuditCrawlableLinksAndCanonicalApex(): void
     {
-        $audit = new PageAudit();
+        $audit = new PageAudit(false, 'example.com');
         $html = '<!doctype html><html lang="en"><head><title>T</title>'
             . '<meta name="description" content="d">'
             . '<link rel="canonical" href="https://www.example.com/p/"></head><body>'
@@ -98,12 +98,44 @@ final class M13ContractTest extends TestCase
 
     public function testCanonicalApexCheckIsAttributeOrderIndependent(): void
     {
-        $audit = new PageAudit();
+        $audit = new PageAudit(false, 'example.com');
         // href BEFORE rel — an agent shell controls attribute order.
         $html = '<!doctype html><html><head><title>T</title><meta name="description" content="d">'
             . '<link href="https://www.example.com/p/" rel="canonical"></head><body>ok</body></html>';
         $audit->auditPage('p.html', $html);
         $joined = implode("\n", array_map(static fn (array $f): string => $f['message'], $audit->findings()));
         self::assertStringContainsString('www.', $joined, 'href-first www canonical must still WARN');
+    }
+
+    /**
+     * The check follows the site's chosen canonical host, both ways: on a
+     * www-canonical site the www URL is right and the apex one is the
+     * duplicate. Hard-coding "apex good, www bad" would fight the operator's
+     * own host redirect.
+     */
+    public function testCanonicalHostCheckFollowsTheSitePreference(): void
+    {
+        $page = static fn (string $host): string => '<!doctype html><html><head><title>T</title>'
+            . '<meta name="description" content="d"><link rel="canonical" href="https://' . $host . '/p/">'
+            . '</head><body>ok</body></html>';
+
+        $wwwSite = new PageAudit(false, 'www.example.com');
+        $wwwSite->auditPage('ok.html', $page('www.example.com'));
+        $wwwSite->auditPage('bad.html', $page('example.com'));
+
+        $messages = implode("\n", array_map(static fn (array $f): string => $f['message'], $wwwSite->findings()));
+        self::assertStringNotContainsString('ok.html', implode("\n", array_map(static fn (array $f): string => $f['page'], $wwwSite->findings())));
+        self::assertStringContainsString('canonical host is www.example.com', $messages);
+        self::assertFalse($wwwSite->hasFailures(), 'a host mismatch is a WARN, never a build failure');
+    }
+
+    /** No base URL = no expected host, so the canonical check stands aside. */
+    public function testCanonicalHostCheckIsSkippedWithoutABaseUrl(): void
+    {
+        $audit = new PageAudit();
+        $audit->auditPage('p.html', '<!doctype html><html><head><title>T</title><meta name="description" content="d">'
+            . '<link rel="canonical" href="https://www.example.com/p/"></head><body>ok</body></html>');
+
+        self::assertSame([], $audit->findings());
     }
 }

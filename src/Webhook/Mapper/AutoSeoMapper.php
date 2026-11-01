@@ -24,6 +24,13 @@ use Psr\Log\LoggerInterface;
  * Expected payload:
  *   { id, title, slug?, excerpt?, body_html, featured_image_url?, author?,
  *     seo_title?, seo_description?, status?, published_at? }
+ *
+ * The real AutoSEO service names things differently (content_html,
+ * metaDescription, heroImageUrl/heroImageAlt, publishedAt with milliseconds,
+ * languageCode, event) — normalize() aliases those onto the generic shape,
+ * with explicit generic keys winning. Its `test` event and non-primary-locale
+ * deliveries (the engine generates translations itself) are skipped, not
+ * failed.
  */
 final class AutoSeoMapper implements WebhookMapper
 {
@@ -47,6 +54,20 @@ final class AutoSeoMapper implements WebhookMapper
 
     public function process(Site $site, array $payload, \Closure $heartbeat): string
     {
+        if ((string) ($payload['event'] ?? '') === 'test') {
+            throw new \InvalidArgumentException('test event — nothing to publish.');
+        }
+
+        $language = strtolower(trim((string) ($payload['languageCode'] ?? '')));
+        if ($language !== '' && substr($language, 0, 2) !== strtolower(substr($site->primaryLocale, 0, 2))) {
+            throw new \InvalidArgumentException(sprintf(
+                'non-primary-language delivery (%s) skipped — the engine generates translations itself.',
+                $language,
+            ));
+        }
+
+        $payload = $this->normalize($payload);
+
         $sourceRef = trim((string) ($payload['id'] ?? ''));
         if ($sourceRef === '') {
             throw new \InvalidArgumentException('autoseo payload is missing "id" (needed for idempotency).');
@@ -68,7 +89,8 @@ final class AutoSeoMapper implements WebhookMapper
         $featuredUrl = trim((string) ($payload['featured_image_url'] ?? ''));
         if ($featuredUrl !== '') {
             $heartbeat();
-            $featuredMediaId = $this->adopt($site, $featuredUrl, $title);
+            $featuredAlt = trim((string) ($payload['featured_image_alt'] ?? ''));
+            $featuredMediaId = $this->adopt($site, $featuredUrl, $featuredAlt !== '' ? $featuredAlt : $title);
         }
 
         $input = [
@@ -85,6 +107,13 @@ final class AutoSeoMapper implements WebhookMapper
         ];
         if (isset($payload['slug'])) {
             $input['slug'] = (string) $payload['slug'];
+        }
+        // Structured fragments: only when sent — an absent key must not clear
+        // a stored fragment on the update path.
+        foreach (['intro', 'tldr', 'conclusion'] as $fragment) {
+            if (isset($payload[$fragment])) {
+                $input[$fragment] = (string) $payload[$fragment];
+            }
         }
         if (isset($payload['published_at'])) {
             $input['published_at'] = (string) $payload['published_at'];
@@ -105,6 +134,60 @@ final class AutoSeoMapper implements WebhookMapper
         $created = $this->content->create($site, $input, 'webhook:autoseo');
 
         return sprintf('created post #%d (%s)', $created->id, $created->slug);
+    }
+
+    /**
+     * Aliases the real AutoSEO field names onto the generic article shape
+     * this mapper documents. Explicit generic keys always win.
+     *
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, mixed>
+     */
+    private function normalize(array $payload): array
+    {
+        $alias = static function (string $generic, string $autoseo) use (&$payload): void {
+            if (!isset($payload[$generic]) || trim((string) $payload[$generic]) === '') {
+                $value = trim((string) ($payload[$autoseo] ?? ''));
+                if ($value !== '') {
+                    $payload[$generic] = $value;
+                }
+            }
+        };
+
+        $alias('body_html', 'content_html');
+        $alias('intro', 'intro_html');
+        $alias('tldr', 'tldr_html');
+        $alias('conclusion', 'conclusion_html');
+        $alias('excerpt', 'metaDescription');
+        $alias('seo_description', 'metaDescription');
+        $alias('featured_image_url', 'heroImageUrl');
+        $alias('featured_image_alt', 'heroImageAlt');
+        $alias('published_at', 'publishedAt');
+
+        // AutoSEO stamps milliseconds ("…T12:34:56.000Z"); the content layer
+        // only accepts strict YYYY-MM-DDTHH:MM:SSZ. Re-emit anything parseable.
+        if (isset($payload['published_at'])) {
+            $iso = $this->isoZ((string) $payload['published_at']);
+            if ($iso === null) {
+                unset($payload['published_at']);
+            } else {
+                $payload['published_at'] = $iso;
+            }
+        }
+
+        return $payload;
+    }
+
+    private function isoZ(string $value): ?string
+    {
+        try {
+            return (new \DateTimeImmutable($value))
+                ->setTimezone(new \DateTimeZone('UTC'))
+                ->format('Y-m-d\TH:i:s\Z');
+        } catch (\Exception) {
+            return null;
+        }
     }
 
     /**

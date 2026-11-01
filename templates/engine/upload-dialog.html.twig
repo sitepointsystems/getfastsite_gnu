@@ -1,0 +1,202 @@
+{# Upload progress dialog, shared by the Media and Files screens. Selecting
+   files opens the modal and the CLIENT drives the batch — one XHR POST per
+   file with ajax=1 (same client-driven-loop pattern as the SEO-fix dialog),
+   so a failing file shows the server's error on its own row while the rest
+   continue. The plain form submit stays as the no-JS fallback (the handlers
+   loop a files[] array) and still carries the URL-import field where one
+   exists. Include with:
+     upload_endpoint — the screen's action URL
+     upload_hint     — what "processing" means on this screen (only mention
+                       ShortPixel when the site actually has it) #}
+<style>
+  /* The picker: a real target you can drop onto, not a 1997 file input. */
+  .fs-drop{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.35rem;
+    text-align:center;padding:1.9rem 1.2rem;cursor:pointer;border:1.5px dashed var(--border);
+    border-radius:var(--radius);background:var(--bg-2);transition:border-color .15s,background .15s;width:100%}
+  .fs-drop:hover,.fs-drop:focus-within{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 7%,var(--bg-2))}
+  .fs-drop.is-over{border-color:var(--accent);border-style:solid;background:color-mix(in srgb,var(--accent) 14%,var(--bg-2))}
+  .fs-drop-icon{font-size:1.5rem;line-height:1;opacity:.75}
+  .fs-drop-main{font-weight:600}
+  .fs-drop-main u{color:var(--accent);text-underline-offset:2px}
+  .fs-drop-sub{font-size:.8rem;color:var(--muted);max-width:46ch}
+  /* The per-item "replace" control is a link, not a drop zone. */
+  label.linkbtn input[type=file]{display:none}
+</style>
+
+<dialog id="upload-modal" class="modal">
+  <div class="m-head"><h3 id="upload-title">Uploading…</h3></div>
+  <div class="m-body">
+    <div style="height:.5rem;border:1px solid var(--border);border-radius:99px;overflow:hidden;background:var(--bg-2)">
+      <div id="upload-bar" style="height:100%;width:0%;background:var(--accent);transition:width .25s ease"></div>
+    </div>
+    <p class="mut" id="upload-step" style="font-size:.85rem;margin:.6rem 0 0"></p>
+    <div id="upload-log" class="m-scroll" style="font-size:.83rem;margin-top:.6rem"></div>
+  </div>
+  <div class="m-actions"><button type="button" class="button small" id="upload-close" data-modal-close disabled>Done</button></div>
+</dialog>
+
+<script>
+(function () {
+  var CSRF = {{ csrf|json_encode|raw }};
+  var ACTION = {{ upload_endpoint|json_encode|raw }};
+  var HINT = {{ upload_hint|json_encode|raw }};
+  if (!window.FormData) return;
+  // Resolved at DOM-ready (see init below), NOT here: this partial is included
+  // above the item grid, so the per-item "replace" pickers do not exist yet
+  // when this script runs. Binding early matched only the Add-media input and
+  // left every replace control silently inert.
+  var form = null;
+
+  var dlg = document.getElementById('upload-modal');
+  var bar = document.getElementById('upload-bar');
+  var step = document.getElementById('upload-step');
+  var log = document.getElementById('upload-log');
+  var closeBtn = document.getElementById('upload-close');
+  var running = false;
+  // Uploads are in flight — no closing (Esc/backdrop) mid-batch; the current
+  // trip would finish server-side with the dialog gone.
+  dlg.addEventListener('cancel', function (e) { if (running) e.preventDefault(); });
+  dlg.addEventListener('click', function (e) { if (running) e.stopImmediatePropagation(); }, true);
+  dlg.addEventListener('close', function () { window.location.reload(); });
+
+  function line(text, cls) {
+    var p = document.createElement('p');
+    p.style.margin = '.25rem 0';
+    p.style.borderTop = '1px solid var(--border)';
+    p.style.paddingTop = '.25rem';
+    if (cls === 'err') p.style.color = '#f87171';
+    p.textContent = text;
+    log.appendChild(p);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  // XHR, not fetch — upload.onprogress is the only way to move the bar WHILE
+  // the bytes leave the browser; fetch only reports the response.
+  function upload(file, single, extra, onProgress) {
+    return new Promise(function (resolve, reject) {
+      var fd = new FormData();
+      fd.append('_csrf', CSRF);
+      fd.append('ajax', '1');
+      fd.append('file', file, file.name);
+      for (var k in extra) { if (Object.prototype.hasOwnProperty.call(extra, k)) fd.append(k, extra[k]); }
+      if (single && !extra) {
+        // One typed alt cannot describe several images — it only travels
+        // with a single-file upload; a batch gets auto-generated alt.
+        var alt = form.querySelector('input[name=alt]');
+        if (alt) fd.append('alt', alt.value);
+      }
+      // One decorative checkbox CAN describe several images — it travels
+      // with every file of the batch (but never with a replace, which keeps
+      // the item's existing alt).
+      var dec = extra ? null : form.querySelector('input[name=decorative]');
+      if (dec && dec.checked) fd.append('decorative', '1');
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', ACTION);
+      xhr.responseType = 'json';
+      // The escape hatch for a dead TCP connection — without it a stalled
+      // upload leaves the dialog unclosable forever.
+      xhr.timeout = 300000;
+      xhr.upload.onprogress = function (e) { if (e.lengthComputable && e.total > 0) onProgress(e.loaded / e.total); };
+      xhr.onerror = function () { reject(new Error('Network error — the upload did not reach the server.')); };
+      xhr.ontimeout = function () { reject(new Error('No answer after 5 minutes — the server may still be processing it; check the library after closing.')); };
+      xhr.onload = function () {
+        var json = xhr.response;
+        if (!json || typeof json !== 'object') {
+          // The two non-JSON answers worth explaining honestly: nginx's own
+          // 413 (the file never reached PHP) and its 504 (PHP is still
+          // working past the proxy timeout — the file may appear anyway).
+          if (xhr.status === 413) { reject(new Error('The file exceeds the server upload size limit.')); return; }
+          if (xhr.status === 504) { reject(new Error('The server took too long to answer — processing may still finish; check the library after closing.')); return; }
+          reject(new Error('HTTP ' + xhr.status + ' — unexpected response (are you still signed in?)'));
+          return;
+        }
+        if (!json.success) { reject(new Error((json.error && json.error.message) || 'Unknown error')); return; }
+        resolve(json.data);
+      };
+      xhr.send(fd);
+    });
+  }
+
+  async function run(files, extra, verb) {
+    running = true;
+    closeBtn.disabled = true;
+    bar.style.width = '0%';
+    log.textContent = '';
+    document.getElementById('upload-title').textContent =
+      files.length === 1 ? verb + ' ' + files[0].name + '…' : verb + ' ' + files.length + ' files…';
+    dlg.showModal();
+
+    var ok = 0, failed = 0;
+    for (let i = 0; i < files.length; i++) {
+      let name = files[i].name;
+      let label = (i + 1) + ' of ' + files.length + ': ' + name;
+      step.textContent = label + ' — uploading…';
+      try {
+        var d = await upload(files[i], files.length === 1, extra, function (frac) {
+          // A trip is upload THEN server-side processing — the byte transfer
+          // is the first 40% of this file's slice of the bar.
+          bar.style.width = (((i + frac * 0.4) / files.length) * 100).toFixed(1) + '%';
+          step.textContent = frac >= 1 ? label + ' — ' + HINT : label + ' — uploading ' + Math.round(frac * 100) + '%…';
+        });
+        ok++;
+        line('✓ ' + name + (d.message ? ' — ' + d.message : ' → #' + d.id + (d.alt ? ' — alt: ' + d.alt : '')));
+      } catch (e) {
+        failed++;
+        line(name + ' — ' + e.message, 'err');
+      }
+      bar.style.width = Math.round(((i + 1) / files.length) * 100) + '%';
+    }
+    step.textContent = 'Done — ' + ok + ' ' + (extra ? 'replaced' : 'uploaded') + (failed > 0 ? ', ' + failed + ' failed' : '') + '.';
+    running = false;
+    closeBtn.disabled = false;
+  }
+
+  function init() {
+    var inputs = document.querySelectorAll('[data-upload-input]');
+    if (!inputs.length) return;
+    // The Add-media picker; the per-item "replace" pickers carry their own
+    // data-upload-extra and never read the shared fields.
+    form = inputs[0].form;
+
+    Array.prototype.forEach.call(inputs, function (input) {
+      var raw = input.getAttribute('data-upload-extra');
+      var extra = raw ? JSON.parse(raw) : null;
+      input.addEventListener('change', function () {
+        var files = Array.prototype.slice.call(input.files || []);
+        input.value = '';
+        if (files.length > 0) run(files, extra, extra ? 'Replacing' : 'Uploading');
+      });
+      // Every one of these inputs sits INSIDE its <label>, so a click on the
+      // input bubbles back to the label and re-opens the picker.
+      input.addEventListener('click', function (e) { e.stopPropagation(); });
+    });
+
+    // Drag and drop onto the picker. The document-level handlers stop the
+    // browser from NAVIGATING to a file dropped slightly off target, which
+    // silently discards whatever the page was holding.
+    var drop = document.querySelector('[data-upload-drop]');
+    if (drop) {
+      ['dragenter', 'dragover'].forEach(function (evt) {
+        drop.addEventListener(evt, function (e) { e.preventDefault(); drop.classList.add('is-over'); });
+      });
+      ['dragleave', 'dragend'].forEach(function (evt) {
+        drop.addEventListener(evt, function () { drop.classList.remove('is-over'); });
+      });
+      drop.addEventListener('drop', function (e) {
+        e.preventDefault();
+        drop.classList.remove('is-over');
+        var files = Array.prototype.slice.call((e.dataTransfer && e.dataTransfer.files) || []);
+        if (files.length > 0) run(files, null, 'Uploading');
+      });
+      document.addEventListener('dragover', function (e) { e.preventDefault(); });
+      document.addEventListener('drop', function (e) { e.preventDefault(); });
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>

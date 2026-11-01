@@ -29,9 +29,82 @@ final class PageAudit
     /**
      * @param bool $allowScripts the site opted into user scripts (#13) — the
      *   zero-JS FAIL and the external-<script src> FAIL are relaxed for it.
+     * @param string $canonicalHost the one host every canonical must use
+     *   (the site's apex, or its www. form when that is the canonical host).
+     *   Empty = the site has no base URL, so the check is skipped.
+     * @param list<string> $userScripts the verbatim blocks the build injects
+     *   into every page for a scripts-enabled site (#13). Removed before the
+     *   asset checks, exactly like a data-fs-embed region: the operator pasted
+     *   this markup knowing it forfeits the guarantee, and a tag pack is more
+     *   than a <script src> — GTM's own snippet carries a <noscript><iframe>,
+     *   which as an "external resource" FAILed every page and made the feature
+     *   unpublishable. The rest of each page is still audited normally.
+     * @param bool $ctaTracking the site's CTA-tracking toggle is on, so the
+     *   CtaAnnotator build pass ran — every link/button must now carry the
+     *   four data-cta* attributes. An element without them is an annotator
+     *   bug (the pass normalizes content, so content can never trip this),
+     *   which makes it a pipeline-invariant FAIL like the img checks.
+     * @param array{url?: string, type?: string, width?: int, height?: int} $favicon
+     *   what the build resolved for this site's favicon, or [] when none is
+     *   configured. Checked at SITE level rather than per page: the value is
+     *   the same on every page, and one honest line beats the same warning
+     *   repeated a few hundred times.
      */
-    public function __construct(private readonly bool $allowScripts = false)
+    public function __construct(
+        private readonly bool $allowScripts = false,
+        private readonly string $canonicalHost = '',
+        private readonly array $userScripts = [],
+        private readonly bool $ctaTracking = false,
+        private readonly bool $development = false,
+        private readonly array $favicon = [],
+    ) {
+    }
+
+    /**
+     * Site-level findings — things that are true of the whole build rather than
+     * of one page. Called once per build, alongside auditCss.
+     */
+    public function auditSite(): void
     {
+        // Not a defect, but the single most expensive thing to discover late:
+        // a site that has quietly been invisible to Google since launch. The
+        // build log is where someone looks when traffic never arrives.
+        if ($this->development) {
+            $this->warn('(site)', 'Development mode is ON — every page ships noindex, nofollow and the site cannot appear in search. Turn it off on Site Settings to go live.');
+        }
+
+        // The favicon, against Google's OWN stated requirements:
+        // "Google Search supports the following favicon file formats: BMP,
+        // GIF, ICO, PNG, JPEG, PPM, and TIFF" and "must be a square (1:1
+        // aspect ratio) that's at least 8x8px".
+        //
+        // Every failure here is silent by nature — the icon renders perfectly
+        // in the browser tab, so the only symptom is a blank square in the
+        // search result, months later, with nothing to attribute it to.
+        $url = (string) ($this->favicon['url'] ?? '');
+        if ($url === '') {
+            // The shells fall back to an inline SVG data URI. That keeps the
+            // browser tab happy and does nothing for Search: SVG is not on
+            // Google's list, and a data: URI is neither crawlable nor a
+            // stable URL, both of which Google requires.
+            $this->warn('(site)', 'No favicon is set, so the shell falls back to an inline SVG — which Google cannot use (SVG is not a supported favicon format, and a data: URI is not crawlable). Set one on Site Settings to get an icon in search results.');
+
+            return;
+        }
+
+        $ext = strtolower(pathinfo(parse_url($url, PHP_URL_PATH) ?: $url, PATHINFO_EXTENSION));
+        if (!\in_array($ext, ['png', 'jpg', 'jpeg', 'gif', 'ico', 'bmp', 'ppm', 'tif', 'tiff'], true)) {
+            $this->warn('(site)', sprintf('The favicon is .%s, which Google Search does not support (BMP, GIF, ICO, PNG, JPEG, PPM, TIFF only) — it will not appear in search results.', $ext));
+        }
+
+        $w = (int) ($this->favicon['width'] ?? 0);
+        $h = (int) ($this->favicon['height'] ?? 0);
+        if ($w > 0 && $h > 0 && $w !== $h) {
+            $this->warn('(site)', sprintf('The favicon is %dx%d — Google requires a square (1:1) image and will not show a non-square one. Upload a square source image.', $w, $h));
+        }
+        if ($w > 0 && $w < 8) {
+            $this->warn('(site)', sprintf('The favicon is %dpx wide — Google requires at least 8x8px (48x48 or larger is recommended).', $w));
+        }
     }
 
     public function auditPage(string $path, string $html): void
@@ -46,6 +119,11 @@ final class PageAudit
         // image-dimension / crawlable-link checks; the rest of the page is
         // still audited normally.
         $auditable = str_contains($html, 'data-fs-embed') ? $this->stripEmbeds($html) : $html;
+        foreach ($this->userScripts as $block) {
+            if ($block !== '') {
+                $auditable = str_replace($block, '', $auditable);
+            }
+        }
 
         $this->checkNoExternalResources($path, $auditable);
         $this->checkNoScripts($path, $auditable);
@@ -55,6 +133,31 @@ final class PageAudit
         $this->checkCanonicalApex($path, $html);
         $this->checkCrawlableLinks($path, $auditable);
         $this->checkByteWeight($path, $html);
+        $this->checkCtaTracking($path, $html);
+    }
+
+    /**
+     * GTM CTA attributes: with the site toggle on, the CtaAnnotator pass ran
+     * over this page, so every link/button must carry data-cta/-text/
+     * -language/-location. Runs on the page MINUS the injected user-script
+     * blocks (those are injected after annotation, exactly like the asset
+     * checks treat them) but INCLUDING data-fs-embed regions — the annotator
+     * covers those too. CtaAnnotator::missing applies the same skip rules
+     * (script/svg/template/… content) the annotator itself used.
+     */
+    private function checkCtaTracking(string $path, string $html): void
+    {
+        if (!$this->ctaTracking) {
+            return;
+        }
+        foreach ($this->userScripts as $block) {
+            if ($block !== '') {
+                $html = str_replace($block, '', $html);
+            }
+        }
+        foreach (CtaAnnotator::missing($html) as $snippet) {
+            $this->fail($path, 'A link/button is missing the CTA tracking attributes (data-cta*): ' . $snippet);
+        }
     }
 
     /**
@@ -92,6 +195,20 @@ final class PageAudit
         }
 
         return $html;
+    }
+
+    /**
+     * Called by the build for a content page whose body renders images while
+     * none was prioritised for LCP — no featured_media_id, no hero-sized
+     * first image (or a featured image that no longer resolves). Such a page
+     * almost certainly ships its LCP as loading="lazy" with no preload, which
+     * Lighthouse fails; it costs a performance point while every other engine
+     * signal reports the page clean, so the build is where it has to say so.
+     * A WARN, never a FAIL: a page whose real LCP is text is legitimate.
+     */
+    public function warnUnprioritizedLcp(string $path): void
+    {
+        $this->warn($path, 'Page has images but no prioritised LCP image — its hero likely ships loading="lazy" with no preload. Set featured_media_id (a hero-sized first body image is prioritised automatically).');
     }
 
     public function auditCss(string $css): void
@@ -191,15 +308,18 @@ final class PageAudit
     }
 
     /**
-     * Duplicate-content guard: the canonical must be the apex, never www.
-     * Extract each <link> tag first so href/rel order doesn't matter (an
-     * agent shell controls attribute order).
+     * Duplicate-content guard: every canonical must name the site's ONE
+     * canonical host — the apex by default, or the www. form when the operator
+     * chose it — so it agrees with the host-level 301. Extract each <link> tag
+     * first so href/rel order doesn't matter (an agent shell controls
+     * attribute order).
      */
     private function checkCanonicalApex(string $path, string $html): void
     {
-        if (preg_match_all('/<link\b[^>]*>/i', $html, $links) === false) {
+        if ($this->canonicalHost === '' || preg_match_all('/<link\b[^>]*>/i', $html, $links) === false) {
             return;
         }
+        $expected = strtolower($this->canonicalHost);
         foreach ($links[0] as $link) {
             if (preg_match('/\brel="canonical"/i', $link) !== 1) {
                 continue;
@@ -207,9 +327,9 @@ final class PageAudit
             if (preg_match('/\bhref="(https?:\/\/[^"]+)"/i', $link, $m) !== 1) {
                 continue;
             }
-            $host = (string) parse_url($m[1], PHP_URL_HOST);
-            if (str_starts_with(strtolower($host), 'www.')) {
-                $this->warn($path, 'Canonical points at the www. host (' . $host . ') — use the apex to avoid duplicate content.');
+            $host = strtolower((string) parse_url($m[1], PHP_URL_HOST));
+            if ($host !== '' && $host !== $expected) {
+                $this->warn($path, 'Canonical points at ' . $host . ' — the site\'s canonical host is ' . $expected . ' (duplicate content).');
             }
         }
     }

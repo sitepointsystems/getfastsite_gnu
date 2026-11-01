@@ -197,7 +197,16 @@ final class BackupService
             ?? throw new \RuntimeException('No DB backup found for site ' . $site->handle);
 
         $raw = $this->fetchDb($key);
-        $restored = $this->swapDb($this->databases->sitePath($site->handle) . '/site.db', $raw, fn () => $this->databases->closeSite($site->handle));
+        $restored = $this->swapDb(
+            $this->databases->sitePath($site->handle) . '/site.db',
+            $raw,
+            function () use ($site): void {
+                if ($this->databases->isSiteOpen($site->handle)) {
+                    $this->foldWal($this->databases->site($site->handle));
+                }
+                $this->databases->closeSite($site->handle);
+            },
+        );
 
         // Reopen + integrity + WAL truncate on the live copy.
         $check = (string) $this->databases->site($site->handle)->fetchOne('PRAGMA quick_check');
@@ -212,7 +221,7 @@ final class BackupService
             payload: ['trigger' => 'restore'],
             queue: 'high',
             dedupeKey: 'build:' . $site->handle,
-            chain: [['type' => 'publish_git', 'payload' => ['message' => 'restore: rebuild from backup ' . basename($key)]]],
+            chain: \Fastsite\Build\Service\PublishTrigger::publishChain($site, 'restore: rebuild from backup ' . basename($key)),
         );
 
         $this->logger->warning('Site DB restored', ['site' => $site->handle, 'from' => $key, 'preserved' => $restored, 'rebuild' => $jobUuid]);
@@ -349,7 +358,16 @@ final class BackupService
             ?? throw new \RuntimeException('No engine DB backup found');
 
         $raw = $this->fetchDb($key);
-        $preserved = $this->swapDb($this->databases->dataPath() . '/engine/engine.db', $raw, fn () => $this->databases->closeAll());
+        $preserved = $this->swapDb(
+            $this->databases->dataPath() . '/engine/engine.db',
+            $raw,
+            function (): void {
+                if ($this->databases->isEngineOpen()) {
+                    $this->foldWal($this->databases->engine());
+                }
+                $this->databases->closeAll();
+            },
+        );
 
         $check = (string) $this->databases->engine()->fetchOne('PRAGMA quick_check');
         if ($check !== 'ok') {
@@ -545,6 +563,46 @@ final class BackupService
         @unlink($livePath . '-shm');
 
         return $preserved;
+    }
+
+    /**
+     * Folds the WAL into the DB file BEFORE the swap releases the handle, so
+     * the displaced copy we keep is self-contained.
+     *
+     * Without this the `.pre-restore-{stamp}` file is a HUSK. The rename
+     * moves site.db and NOT site.db-wal — the sidecar keeps the name the
+     * connection opened — so swapDb's `@unlink($livePath . '-wal')`, which is
+     * correct and necessary for the DB being swapped IN, destroys the
+     * displaced DB's un-checkpointed tail. With WAL + synchronous=NORMAL that
+     * tail is every recent write; verified in a Linux container, where a
+     * fresh reader of the preserved file got a disk I/O error while the old
+     * handle lived and `no such table` once it closed. The whole point of
+     * keeping the file is that a restore is undoable.
+     *
+     * ONLY on a handle this process already holds, which both call sites
+     * check. If nothing of ours is open there is no un-checkpointed WAL that
+     * is ours to fold — and forcing one open would CREATE the very file the
+     * restore is replacing, which breaks restoring a site whose site.db was
+     * DELETED (the M10 criterion, and how this regressed once).
+     *
+     * SQLite folds the WAL itself when the LAST connection closes, so the
+     * husk only ever appeared while another process held a handle — the same
+     * precondition as the stale read above. This removes swapDb's dependency
+     * on being that last connection, which a `--sync` CLI restore run while
+     * the workers are up is not.
+     *
+     * Best effort by design: a failure here must never abort a restore. The
+     * restore IS the recovery action, and all an unfoldable WAL costs is the
+     * displaced copy's tail — which is what we were trying to save, not what
+     * we were asked to do.
+     */
+    private function foldWal(Connection $db): void
+    {
+        try {
+            $this->databases->checkpoint($db);
+        } catch (\Throwable $e) {
+            $this->logger->warning('Could not checkpoint before the restore swap', ['error' => $e->getMessage()]);
+        }
     }
 
     /**

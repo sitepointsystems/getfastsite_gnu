@@ -85,6 +85,51 @@ final class RedirectServiceTest extends TestCase
         $this->redirects->save('rtest', '/x', '');
     }
 
+    public function testGoneNeedsNoTargetAndDropsAnyGiven(): void
+    {
+        $saved = $this->redirects->save('rtest', '/retired', '', RedirectService::GONE);
+        self::assertSame(['from_path' => '/retired', 'to_path' => '', 'status' => 410], $saved);
+
+        // A target sent alongside 410 is dropped, so the row can never later
+        // be read as "redirect somewhere".
+        $this->redirects->save('rtest', '/also-retired', '/somewhere', RedirectService::GONE);
+
+        $rows = array_column($this->redirects->list('rtest'), null, 'from_path');
+        self::assertSame('', $rows['/also-retired']['to_path']);
+        self::assertSame(410, (int) $rows['/also-retired']['status']);
+    }
+
+    public function testGoneSkipsTheSelfReferenceCheck(): void
+    {
+        // /loop → /loop is nonsense for a 3xx, but a 410 has no target at all.
+        $this->redirects->save('rtest', '/loop', '/loop', RedirectService::GONE);
+        self::assertSame('', $this->redirects->list('rtest')[0]['to_path']);
+    }
+
+    public function testGoneCanBeReplacedByARealRedirect(): void
+    {
+        $this->redirects->save('rtest', '/x', '', RedirectService::GONE);
+        $this->redirects->save('rtest', '/x', '/back-again', 301);
+
+        $rows = $this->redirects->list('rtest');
+        self::assertCount(1, $rows);
+        self::assertSame('/back-again', $rows[0]['to_path']);
+        self::assertSame(301, (int) $rows[0]['status']);
+    }
+
+    public function testResolveMissingCanMarkGone(): void
+    {
+        $this->redirects->recordMissing('rtest', '/dead');
+        $id = (int) $this->redirects->listMissing('rtest')[0]['id'];
+
+        $this->redirects->resolveMissing('rtest', $id, '', RedirectService::GONE);
+
+        self::assertSame([], $this->redirects->listMissing('rtest'));
+        $rows = $this->redirects->list('rtest');
+        self::assertSame('/dead', $rows[0]['from_path']);
+        self::assertSame(410, (int) $rows[0]['status']);
+    }
+
     public function testSelfReferentialThrows(): void
     {
         $this->expectException(\InvalidArgumentException::class);

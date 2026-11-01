@@ -67,9 +67,21 @@ final class ShellTest extends TestCase
             new \Fastsite\Build\Service\FileRenderer($mediaRepo, $this->databases, new NullLogger(), $appRoot),
             $mediaRepo,
             new \Fastsite\Site\Service\SiteScriptService($this->databases, $clock),
+            new \Fastsite\Build\Service\HtaccessBuilder(), new \Fastsite\Component\Service\ComponentHookService($this->databases, $clock, new \Fastsite\Component\Repository\DbalComponentRepository($this->databases, $clock)),
+            new \Fastsite\Form\Service\FormRenderer(new \Fastsite\Form\Service\FormService($this->databases, $clock), 'https://engine.test'),
         );
 
-        $publish = new \Fastsite\Build\Service\PublishTrigger($queue);
+        $translations = new \Fastsite\Translation\Service\TranslationService(
+            $contentRepo,
+            $translationRepo,
+            new \Fastsite\Tests\Support\UnusedAiClientFactory(),
+            new \Fastsite\Content\Service\ContentSanitizer(),
+            $this->databases,
+            $clock,
+            new NullLogger(),
+            new \Fastsite\Translation\TranslationLog($this->databases, $clock),
+        );
+        $publish = new \Fastsite\Build\Service\PublishTrigger($queue, $translations);
         $this->shell = new ShellService($this->databases, $this->siteRepo, $publish, $build, $clock, new NullLogger());
     }
 

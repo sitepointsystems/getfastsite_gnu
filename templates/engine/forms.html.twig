@@ -1,0 +1,353 @@
+{% extends 'dash-layout.html.twig' %}
+
+{% block body %}
+<h1>{{ site.name }}</h1>
+<p class="sub">Forms — {{ forms|length }}. A published site is static, so a form posts back to this server, which emails you and stores the submission. Embed one in any page with <span class="mono">&lt;div data-fs-form="handle"&gt;&lt;/div&gt;</span>. Zero JavaScript ships to the page.</p>
+{% include 'site-nav.html.twig' %}
+
+{% if not smtp_ready and forms|length %}
+  {# The expensive failure is the quiet one: a form that collects perfectly and
+     notifies nobody looks completely healthy from every other angle. #}
+  <div class="card" style="border-color:rgba(245,158,11,.45)">
+    <h2 style="margin-top:0;font-size:1.02rem">No mail account configured</h2>
+    <p class="sub" style="margin-bottom:.6rem">Submissions are still <strong>collected and stored</strong> below, and nothing is lost — but nobody is being emailed about them. Add an SMTP account on <a href="/sites/{{ site.handle }}/settings">Settings</a>, then use <em>Retry failed sends</em> here to deliver everything that queued up in the meantime.</p>
+  </div>
+{% endif %}
+
+<div class="card">
+  <h2 style="margin-top:0">{{ edit_form ? 'Edit form “' ~ edit_form.handle ~ '”' : 'New form' }}</h2>
+  <form method="post" action="/sites/{{ site.handle }}/forms/action">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="action" value="form-save">
+    <input type="hidden" name="id" value="{{ edit_form ? edit_form.id : 0 }}">
+
+    <div class="row">
+      <div><label>Handle <span class="mut">(what the page embeds)</span></label>
+        <input type="text" name="handle" value="{{ edit_form ? edit_form.handle : '' }}" placeholder="contact" required></div>
+      <div><label>Name <span class="mut">(shown in the notification)</span></label>
+        <input type="text" name="name" value="{{ edit_form ? edit_form.name : '' }}" placeholder="Contact us"></div>
+      <div class="tight"><label>Enabled</label>
+        <input type="checkbox" name="enabled" value="1" {{ not edit_form or edit_form.enabled ? 'checked' : '' }}></div>
+    </div>
+
+    <label style="margin-top:.4rem">
+      <input type="checkbox" name="turnstile" value="1" {{ edit_form and edit_form.turnstile ? 'checked' : '' }}>
+      Show a Cloudflare Turnstile challenge on this form
+    </label>
+    <p class="sub" style="margin:.2rem 0 .6rem">
+      {% if turnstile_ready %}
+        Costs this page a small third-party script and relaxes its CSP, so leave it off unless the
+        form is actually being hit. The content scorer runs either way.
+      {% else %}
+        <strong>No Turnstile keys are stored for this site</strong>, so ticking this renders no
+        challenge at all. Add the key pair in the spam-guard card below first.
+      {% endif %}
+    </p>
+
+    <div class="row">
+      <div><label>Send submissions to <span class="mut">(comma separated)</span></label>
+        <input type="text" name="recipients" value="{{ edit_form ? edit_form.recipients|join(', ') : '' }}" placeholder="you@example.com" required></div>
+      <div><label>Subject <span class="mut">(<span class="mono">{{ '{field}' }}</span> inserts a value)</span></label>
+        <input type="text" name="subject" value="{{ edit_form ? edit_form.subject : '' }}" placeholder="New enquiry from {{ '{name}' }}"></div>
+    </div>
+    <p class="sub" style="margin:.2rem 0 .8rem">The recipient is stored here and never read from the submitted page — a form that let the sender choose where mail goes would be an open relay running on your own mail account.</p>
+
+    <h3 style="font-size:.95rem;margin:1.2rem 0 .4rem">Fields</h3>
+    <table>
+      <tr><th>Name</th><th>Label</th><th>Type</th><th>Options / placeholder</th><th>Required</th><th>Full width</th></tr>
+      {% set rows = edit_form ? edit_form.fields : [] %}
+      {% for i in 0..(rows|length + 2) %}
+        {% set f = rows[i] ?? null %}
+        <tr>
+          <td><input type="text" name="field[{{ i }}][name]" value="{{ f ? f.name : '' }}" placeholder="email" size="12"></td>
+          <td><input type="text" name="field[{{ i }}][label]" value="{{ f ? f.label : '' }}" placeholder="Your email" size="14"></td>
+          <td><select name="field[{{ i }}][type]">
+            {% for t in field_types %}<option value="{{ t }}" {{ f and f.type == t ? 'selected' : '' }}>{{ t }}</option>{% endfor %}
+          </select></td>
+          <td><input type="text" name="field[{{ i }}][options]" value="{{ f ? f.options|join(', ') : '' }}" placeholder="Sales, Support" size="16">
+              <input type="text" name="field[{{ i }}][placeholder]" value="{{ f ? f.placeholder : '' }}" placeholder="placeholder" size="12"></td>
+          <td><input type="checkbox" name="field[{{ i }}][required]" value="1" {{ f and f.required ? 'checked' : '' }}></td>
+          <td><input type="checkbox" name="field[{{ i }}][wide]" value="1" {{ not f or f.wide ? 'checked' : '' }}></td>
+        </tr>
+      {% endfor %}
+    </table>
+    <p class="sub" style="margin:.4rem 0 0">Leave a row's name blank to skip it. Save again for three more rows. The first <span class="mono">email</span> field becomes the notification's Reply-To, so hitting reply answers the person who wrote in. <span class="mono">options</span> only applies to <span class="mono">select</span>.</p>
+
+    <div class="row" style="margin-top:1rem">
+      <div><label>Button label</label>
+        <input type="text" name="submit_label" value="{{ edit_form ? edit_form.submitLabel : '' }}" placeholder="Send"></div>
+      <div><label>Thank-you page <span class="mut">(a path on this site)</span></label>
+        <input type="text" name="success_path" value="{{ edit_form ? edit_form.successPath : '' }}" placeholder="/thank-you/"></div>
+    </div>
+    <div><label>Confirmation message <span class="mut">(used when there is no thank-you page)</span></label>
+      <input type="text" name="success_message" value="{{ edit_form ? edit_form.successMessage : '' }}" placeholder="Thanks — we'll be in touch."></div>
+    <div><label>Consent checkbox text <span class="mut">(leave blank for none)</span></label>
+      <input type="text" name="consent_text" value="{{ edit_form ? edit_form.consentText : '' }}" placeholder="the privacy policy"></div>
+
+    <details style="margin-top:1rem">
+      <summary class="mut" style="font-size:.9rem">Auto-reply to the person who submitted{{ edit_form and edit_form.autoresponderEnabled ? ' — ON' : '' }}</summary>
+      <label style="margin-top:.5rem"><input type="checkbox" name="autoresponder_enabled" value="1" {{ edit_form and edit_form.autoresponderEnabled ? 'checked' : '' }}> Send an automatic reply</label>
+      <div><label>Subject</label><input type="text" name="autoresponder_subject" value="{{ edit_form ? edit_form.autoresponderSubject : '' }}" placeholder="Thanks for getting in touch"></div>
+      <div><label>Message</label><textarea name="autoresponder_body" rows="4">{{ edit_form ? edit_form.autoresponderBody : '' }}</textarea></div>
+      <p class="sub" style="margin-top:.5rem">Off by default, deliberately. This mails an address a stranger typed, from your domain — someone can put a third party's address in the form and make your server email them. It is your sending reputation that pays for it, so turn it on only if you want it.</p>
+    </details>
+
+    <details style="margin-top:1rem">
+      <summary class="mut" style="font-size:.9rem">What the site says back to a visitor{{ edit_form and edit_form.messages|length ? ' — ' ~ edit_form.messages|length ~ ' customised' : '' }}</summary>
+      <p class="sub" style="margin:.6rem 0">
+        These are the engine's own replies when a submission is rejected or accepted. They already come out in
+        <strong>{{ site.primaryLocale }}</strong>{% if site.primaryLocale in message_locales %} (built in){% else %} — or rather they fall back to English, because there is no built-in pack for
+        <span class="mono">{{ site.primaryLocale }}</span> yet{% endif %}, so you only need these to match your own voice.
+        Leave a box empty to use the built-in wording. <span class="mono">{{ '{field}' }}</span> becomes the field's label.
+      </p>
+      <p class="sub" style="margin:.6rem 0">
+        Most visitors never see them: a page's own JavaScript usually validates first. These are the fallback when it doesn't.
+      </p>
+      <table>
+        <tr><th style="width:11rem">Message</th><th>Your wording</th></tr>
+        {% for key, hint in message_keys %}
+          <tr>
+            <td class="mono" style="font-size:.82rem">{{ key }}</td>
+            <td><input type="text" name="messages[{{ key }}]" style="width:100%"
+                       value="{{ edit_form ? (edit_form.messages[key] ?? '') : '' }}"
+                       placeholder="{{ hint }}"></td>
+          </tr>
+        {% endfor %}
+      </table>
+    </details>
+
+    <p style="margin-top:1rem">
+      <button class="button" type="submit">{{ edit_form ? 'Save changes' : 'Create form' }}</button>
+      {% if edit_form %}<a class="button ghost" href="/sites/{{ site.handle }}/forms">Cancel</a>{% endif %}
+    </p>
+    <p class="sub">Saving republishes the site — the form's markup is generated at build time, so an edit does not reach the live pages until they are rendered again.</p>
+  </form>
+</div>
+
+{% if forms|length %}
+<div class="card">
+  <h2 style="margin-top:0">Your forms</h2>
+  <table>
+    <tr><th>Handle</th><th>Recipients</th><th>Submissions</th><th>Status</th><th></th></tr>
+    {% for f in forms %}
+      {% set c = counts[f.id] ?? {total: 0, pending: 0, failed: 0, spam: 0} %}
+      <tr>
+        <td class="mono">{{ f.handle }}</td>
+        <td class="mut">{{ f.recipients|join(', ') }}</td>
+        <td>
+          <a href="/sites/{{ site.handle }}/forms?submissions={{ f.id }}">{{ c.total }}</a>
+          {% if c.failed %}<span class="badge err">{{ c.failed }} failed</span>{% endif %}
+          {% if c.pending %}<span class="badge pending">{{ c.pending }} queued</span>{% endif %}
+          {% if c.spam %}<a class="badge warn" href="/sites/{{ site.handle }}/forms?submissions={{ f.id }}&folder=spam">{{ c.spam }} held</a>{% endif %}
+        </td>
+        <td>
+          <span class="badge {{ f.enabled ? 'ok' : 'warn' }}">{{ f.enabled ? 'enabled' : 'disabled' }}</span>
+          {% if f.turnstile %}
+            {# A ticked box with no keys stored renders NO widget. Saying #}
+            {# "challenge" there would describe protection that is not     #}
+            {# actually on, which is worse than showing nothing.           #}
+            <span class="badge {{ turnstile_ready ? 'ok' : 'err' }}"
+                  title="{{ turnstile_ready ? 'Turnstile challenge is active on this form' : 'Turnstile is ticked but this site has no key pair — no challenge is being shown' }}">
+              {{ turnstile_ready ? 'challenge' : 'challenge: no keys' }}
+            </span>
+          {% endif %}
+        </td>
+        <td class="rowacts">
+          <a href="/sites/{{ site.handle }}/forms?form={{ f.handle }}">edit</a>
+          <form method="post" action="/sites/{{ site.handle }}/forms/action" class="inline"
+                data-confirm="Delete the form “{{ f.handle }}”? Pages embedding it will render nothing there. Stored submissions are deleted too.">
+            <input type="hidden" name="_csrf" value="{{ csrf }}">
+            <input type="hidden" name="action" value="form-delete">
+            <input type="hidden" name="id" value="{{ f.id }}">
+            <button type="submit" class="linklike">delete</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2 style="margin-top:0">Spam guard</h2>
+  <p class="sub" style="margin-top:0">
+    Every submission is scored on what it contains before anyone is emailed — links where prose
+    belongs, an address whose domain cannot receive mail, markup no human types. This runs on
+    <strong>every</strong> way into the form, including the no-JavaScript path and hand-authored
+    forms that post straight to the endpoint, which is the part a challenge widget cannot cover.
+  </p>
+  <form method="post" action="/sites/{{ site.handle }}/forms/action">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="action" value="spam-save">
+    <div class="row">
+      <div>
+        <label>Mode</label>
+        <select name="spam_mode">
+          <option value="on" {{ spam_mode == 'on' ? 'selected' : '' }}>On — hold flagged submissions</option>
+          <option value="log" {{ spam_mode == 'log' ? 'selected' : '' }}>Log only — score, but still email everything</option>
+          <option value="off" {{ spam_mode == 'off' ? 'selected' : '' }}>Off — score nothing</option>
+        </select>
+      </div>
+      <div>
+        <label>Keep held submissions for <span class="mut">(days, 0 = delete at once)</span></label>
+        <input type="number" name="spam_retention_days" min="0" max="3650" value="{{ spam_retention_days }}">
+      </div>
+    </div>
+    <p class="sub" style="margin:.2rem 0 .8rem">
+      <strong>Log only</strong> is worth a week before you switch this on. It shows what
+      <em>would</em> have been held without holding anything, so the first thing you learn about a
+      false positive is not that a real enquiry vanished.
+    </p>
+
+    <h3 style="margin:.9rem 0 .3rem;font-size:.95rem">Cloudflare Turnstile <span class="mut">(optional)</span></h3>
+    <p class="sub" style="margin:0 0 .5rem">
+      The optional second layer, enabled per form. It needs a Cloudflare account — sites that do not
+      use Cloudflare simply leave this empty and keep the content scorer, which works on its own.
+      Get a key pair at <span class="mono">dash.cloudflare.com → Turnstile</span>.
+    </p>
+    <div class="row">
+      <div>
+        <label>Site key <span class="mut">(public, ships in the page)</span></label>
+        <input type="text" name="turnstile_site_key" value="{{ site.turnstileSiteKey }}"
+               placeholder="0x4AAA..." autocomplete="off">
+      </div>
+      <div>
+        <label>Secret key</label>
+        <input type="password" name="turnstile_secret" autocomplete="new-password"
+               placeholder="{{ site.turnstileSecretEnc ? '••••••••  (saved — leave blank to reuse)' : '0x4AAA...' }}">
+      </div>
+    </div>
+    {% if site.turnstileSecretEnc %}
+      <label class="mut" style="font-size:.85rem"><input type="checkbox" name="turnstile_secret_clear" value="1"> remove the saved secret</label>
+    {% endif %}
+    <div class="row" style="margin-top:.8rem">
+      <button type="submit" class="button">Save spam settings</button>
+    </div>
+  </form>
+</div>
+
+{% if selected %}
+<div class="card">
+  <h2 style="margin-top:0">Submissions — {{ selected.label }}</h2>
+
+  {# The spam folder is a view of the same list, not a separate screen. A page #}
+  {# nobody has a reason to open is the same as deleting the submission, just  #}
+  {# slower — and a false positive has to be findable by someone who is not    #}
+  {# looking for it.                                                           #}
+  {% set held = (counts[selected.id] ?? {spam: 0}).spam ?? 0 %}
+  <div class="tabs" style="margin-bottom:.8rem">
+    <a class="tab {{ folder == 'inbox' ? 'on' : '' }}"
+       href="/sites/{{ site.handle }}/forms?submissions={{ selected.id }}">Inbox</a>
+    <a class="tab {{ folder == 'spam' ? 'on' : '' }}"
+       href="/sites/{{ site.handle }}/forms?submissions={{ selected.id }}&folder=spam">
+      Spam{% if held %} ({{ held }}){% endif %}
+    </a>
+  </div>
+
+  <div class="row" style="margin-bottom:.8rem">
+    {% if folder == 'spam' %}
+      <form method="post" action="/sites/{{ site.handle }}/forms/action" class="inline">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="release-spam">
+        <input type="hidden" name="form_id" value="{{ selected.id }}">
+        <button type="submit" class="button small ghost">Release all and send</button>
+      </form>
+      <form method="post" action="/sites/{{ site.handle }}/forms/action" class="inline"
+            data-confirm="Delete every held submission on this site? This cannot be undone. They would otherwise delete themselves after {{ spam_retention_days }} day(s).">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="purge-spam">
+        <button type="submit" class="button small ghost">Empty the spam folder</button>
+      </form>
+    {% else %}
+      {% set failed = (counts[selected.id] ?? {failed: 0}).failed ?? 0 %}
+      <form method="post" action="/sites/{{ site.handle }}/forms/action" class="inline">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="retry-failed">
+        <input type="hidden" name="form_id" value="{{ selected.id }}">
+        <button type="submit" class="button small ghost">Retry failed sends</button>
+      </form>
+      {% if failed %}
+        {# The other answer to a pile of failed sends: they were never worth  #}
+        {# sending. Narrowed to `failed` so it can never sweep a delivered    #}
+        {# lead, which is what makes a bulk button here defensible at all.    #}
+        <form method="post" action="/sites/{{ site.handle }}/forms/action" class="inline"
+              data-confirm="Move all {{ failed }} failed send(s) on this form to the spam folder? They stop being retried, and delete themselves after {{ spam_retention_days }} day(s). Submissions that already sent are not touched.">
+          <input type="hidden" name="_csrf" value="{{ csrf }}">
+          <input type="hidden" name="action" value="mark-spam">
+          <input type="hidden" name="form_id" value="{{ selected.id }}">
+          <input type="hidden" name="status" value="failed">
+          <button type="submit" class="button small ghost">Mark {{ failed }} failed as spam</button>
+        </form>
+      {% endif %}
+    {% endif %}
+    <form method="post" action="/sites/{{ site.handle }}/forms/action" class="inline">
+      <input type="hidden" name="_csrf" value="{{ csrf }}">
+      <input type="hidden" name="action" value="export">
+      <input type="hidden" name="form_id" value="{{ selected.id }}">
+      <button type="submit" class="button small ghost">Export CSV</button>
+    </form>
+  </div>
+
+  {% if folder == 'spam' %}
+    <p class="sub" style="margin-top:0">
+      Held by the content scorer and <strong>never emailed</strong>. They delete themselves after
+      {{ spam_retention_days }} day{{ spam_retention_days == 1 ? '' : 's' }}.
+      If one of these is real, release it — the notification goes out as normal.
+    </p>
+  {% endif %}
+
+  {% if submissions|length %}
+    <table>
+      <tr><th>When</th><th>From</th><th>Summary</th><th>Status</th><th></th></tr>
+      {% for s in submissions %}
+        <tr>
+          <td class="mut mono" style="white-space:nowrap">{{ s.createdAt|slice(0, 16)|replace({'T': ' '}) }}</td>
+          <td>{{ s.replyTo ?: '—' }}</td>
+          <td>
+            <details>
+              <summary>{{ s.payload|first|slice(0, 70) ?: '(empty)' }}</summary>
+              <dl style="margin:.5rem 0 0">
+                {% for k, v in s.payload %}
+                  <dt class="mut mono" style="font-size:.8rem">{{ k }}</dt>
+                  <dd style="margin:0 0 .5rem">{{ v ?: '—' }}</dd>
+                {% endfor %}
+              </dl>
+              {% if s.pagePath %}<p class="sub">Submitted from <span class="mono">{{ s.pagePath }}</span>{{ s.locale ? ' (' ~ s.locale ~ ')' : '' }}</p>{% endif %}
+              {# The reasons, not just the score. "It scored 7" is unarguable #}
+              {# and therefore useless when you want to disagree with it.     #}
+              {% if s.spamReasons|length %}
+                <p class="sub" style="margin-top:.4rem">
+                  <strong>Scored {{ s.spamScore }}:</strong> {{ s.spamReasons|join(' · ') }}
+                </p>
+              {% endif %}
+              {% if s.error %}<p class="flash err" style="font-size:.85rem">{{ s.error }}</p>{% endif %}
+            </details>
+          </td>
+          <td>
+            <span class="badge {{ s.status == 'sent' ? 'ok' : (s.status == 'failed' ? 'err' : (s.status == 'spam' ? 'warn' : 'pending')) }}">{{ s.status }}</span>
+            {# In log mode a delivered submission still carries a verdict — #}
+            {# which is the entire point of log mode, so it has to show.    #}
+            {% if s.status != 'spam' and s.spamScore >= 5 %}
+              <span class="badge warn" title="{{ s.spamReasons|join(' · ') }}">would hold ({{ s.spamScore }})</span>
+            {% endif %}
+          </td>
+          <td class="rowacts">
+            {# Both directions from the same row. The scorer gets the common #}
+            {# case; these two are how a person corrects it either way.      #}
+            <form method="post" action="/sites/{{ site.handle }}/forms/action" class="inline">
+              <input type="hidden" name="_csrf" value="{{ csrf }}">
+              <input type="hidden" name="action" value="{{ folder == 'spam' ? 'release-spam' : 'mark-spam' }}">
+              <input type="hidden" name="id" value="{{ s.id }}">
+              <input type="hidden" name="form_id" value="{{ selected.id }}">
+              <button type="submit" class="linklike">{{ folder == 'spam' ? 'not spam' : 'spam' }}</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <p class="sub">{{ folder == 'spam' ? 'Nothing held.' : 'Nothing yet.' }}</p>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

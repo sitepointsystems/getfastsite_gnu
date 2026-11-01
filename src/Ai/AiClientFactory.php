@@ -30,6 +30,12 @@ interface AiClientFactory
     /** Topic-research client (site's OpenRouter credential + Research model). */
     public function researcherForSite(Site $site): Researcher;
 
+    /** Vision alt-text writer (site's OpenRouter credential, general model). */
+    public function altTextForSite(Site $site): \Fastsite\Media\AltTextGenerator;
+
+    /** SEO title/description length rewriter (site's OpenRouter credential, general model). */
+    public function seoRewriterForSite(Site $site): \Fastsite\Seo\SeoRewriter;
+
     public function translatorConfiguredForSite(Site $site): bool;
 
     public function factCheckerConfiguredForSite(Site $site): bool;

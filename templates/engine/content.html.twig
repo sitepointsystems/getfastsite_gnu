@@ -4,13 +4,17 @@
 <style>
   /* Content action bar: equal-height, high-contrast buttons (#6). */
   .content-actions{display:flex;align-items:center;gap:.5rem;margin:0}
-  .content-actions form{display:inline-flex;margin:0}
   .content-actions .button{min-height:36px;display:inline-flex;align-items:center;justify-content:center}
-  /* A second solid accent for "Build & publish" — strong text contrast. */
-  .button.solid2{background:var(--ok);color:#04121a;border-color:var(--ok);font-weight:600}
-  .button.solid2:hover{filter:brightness(1.08)}
-  .linkbtn{background:none;border:0;padding:0;margin:0;font:inherit;color:var(--accent);cursor:pointer;text-decoration:underline}
-  .linkbtn.danger{color:var(--danger)}
+  /* Text search over the list. `stretch` (not a magic min-height) is what
+     keeps the buttons exactly as tall as the input if either ever changes. */
+  .content-search{display:flex;gap:.5rem;align-items:stretch;margin:0 0 1rem}
+  .content-search input[type=search]{flex:1;min-width:0;margin:0}
+  .content-search .button{white-space:nowrap;display:inline-flex;align-items:center}
+  /* Row actions: real buttons for the two things you do constantly (edit,
+     preview), everything rarer behind the kebab. */
+  .rowacts .button.small{min-height:28px;display:inline-flex;align-items:center}
+  .rowacts .button[disabled]{opacity:.45;cursor:not-allowed}
+  .rowacts form{margin:0}
   /* Self-contained WYSIWYG (#14) — dashboard-only JS; published sites stay zero-JS.
      Progressive enhancement: the textarea is the canonical body_html field and
      works with JS disabled; the editor layers on top. */
@@ -59,24 +63,260 @@
 <p class="sub">Content — pure HTML bodies, images via <span class="mono">&lt;img data-media-id="N" alt="…"&gt;</span>.</p>
 {% include 'site-nav.html.twig' %}
 
+{# Every in-screen link keeps the current search, so filtering survives a tab
+   switch, a page step and a round-trip through the editor. The separator is a
+   bare `&` because this is a VARIABLE — autoescape turns it into `&amp;` on
+   output, so writing `&amp;` here would ship a literal `&amp;amp;`. #}
+{% set qs = search ? '&q=' ~ search|url_encode : '' %}
+
 <div class="tabs">
-  <a href="?type=post{{ trash ? '&amp;trash=1' }}" class="{{ type == 'post' ? 'active' }}">Posts</a>
-  <a href="?type=page{{ trash ? '&amp;trash=1' }}" class="{{ type == 'page' ? 'active' }}">Pages</a>
+  <a href="?type=post{{ trash ? '&amp;trash=1' }}{{ qs }}" class="{{ type == 'post' ? 'active' }}">Posts</a>
+  <a href="?type=page{{ trash ? '&amp;trash=1' }}{{ qs }}" class="{{ type == 'page' ? 'active' }}">Pages</a>
   <span style="flex:1"></span>
   <div class="content-actions">
     {% if trash %}
-      <a class="button small ghost" href="?type={{ type }}">← Back to {{ type }}s</a>
+      <a class="button small ghost" href="?type={{ type }}{{ qs }}">← Back to {{ type }}s</a>
     {% else %}
       <a class="button small" href="?type={{ type }}&amp;new=1">New {{ type }}</a>
-      <form method="post" action="/sites/{{ site.handle }}/content/action">
-        <input type="hidden" name="_csrf" value="{{ csrf }}">
-        <input type="hidden" name="action" value="publish-site">
-        <button class="button small solid2" type="submit">Build &amp; publish</button>
-      </form>
-      <a class="button small ghost" href="?type={{ type }}&amp;trash=1">Trash</a>
+      {# Build & publish used to sit here. It lives in the site nav now, on
+         every screen rather than only this one, so a second copy on the one
+         screen that already has it is just a thing to keep in sync. #}
+      <a class="button small ghost" href="?type={{ type }}&amp;trash=1{{ qs }}">Trash</a>
     {% endif %}
   </div>
 </div>
+
+{# Text search. GET, so a result list is a shareable/bookmarkable URL and the
+   browser's back button behaves. Omitting `page` resets paging on submit. #}
+<form method="get" class="content-search">
+  <input type="hidden" name="type" value="{{ type }}">
+  {% if trash %}<input type="hidden" name="trash" value="1">{% endif %}
+  <input type="search" name="q" value="{{ search }}" autocomplete="off"
+         placeholder="Search {{ trash ? 'trashed ' }}{{ type }}s — title, slug, excerpt, SEO fields or body text"
+         aria-label="Search {{ type }}s">
+  <button class="button small" type="submit">Search</button>
+  {% if search %}<a class="button small ghost" href="?type={{ type }}{{ trash ? '&amp;trash=1' }}">Clear</a>{% endif %}
+</form>
+{% if search %}
+<p class="mut" style="font-size:.85rem;margin:0 0 .8rem">
+  {{ trash ? items|length : total }} {{ (trash ? items|length : total) == 1 ? 'match' : 'matches' }} for “{{ search }}”{{ trash ? ' in trash' }}.
+</p>
+{% endif %}
+
+{% if not trash and not creating and not editing and type == 'post' %}
+{# Post categories. Server-rendered like the Components screen: ?category={slug}
+   prefills the form, so it works with JS off. #}
+<details class="card" {{ editing_category or categories|length == 0 ? 'open' }}>
+  <summary style="font-weight:600;cursor:pointer">Categories — {{ categories|length }}</summary>
+  <p class="mut" style="font-size:.85rem;margin:.6rem 0 .6rem">Each post has one. A category with at least one published post gets an archive at <span class="mono">{{ site.categoryPathPattern }}</span> ({{ site.archivePerPage }} per page, then <span class="mono">…/page/2/</span>), and its posts get the trail Home › Category › post.{% if '{category}' in site.postPathPattern %} Post URLs carry it (<span class="mono">{{ site.postPathPattern }}</span>), so a rename leaves 301s behind.{% endif %} Patterns are under Settings › SEO.</p>
+  {% if categories|length %}
+  <table>
+    <tr><th>Name</th><th>Slug</th><th>Published posts</th><th></th></tr>
+    {% for c in categories %}
+    <tr>
+      <td>{{ c.name }}</td>
+      <td class="mono">{{ c.slug }}</td>
+      <td class="mut">{{ category_counts[c.id]|default(0) }}</td>
+      <td class="rowacts" style="display:flex;gap:.4rem">
+        <a class="button small ghost" href="?type=post&amp;category={{ c.slug }}">Edit</a>
+        <form method="post" action="/sites/{{ site.handle }}/content/action" data-confirm="Delete the category “{{ c.name }}”? This is refused while any post is still in it." data-confirm-title="Delete category" data-confirm-ok="Delete" data-confirm-danger>
+          <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="category-delete"><input type="hidden" name="slug" value="{{ c.slug }}">
+          <button class="button small ghost" type="submit">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  <form method="post" action="/sites/{{ site.handle }}/content/action" id="category-form" style="margin-top:1rem">
+    <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="action" value="category-save">
+    <input type="hidden" name="original_slug" value="{{ editing_category ? editing_category.slug }}">
+    <h3 style="margin:0 0 .4rem;font-size:1rem">{{ editing_category ? 'Edit “' ~ editing_category.name ~ '”' : 'New category' }}</h3>
+    <div class="row">
+      <div><label>Name</label><input type="text" name="name" value="{{ editing_category ? editing_category.name }}" required maxlength="200"></div>
+      <div><label>Slug <span class="mut">(one URL segment; blank = from the name{{ editing_category ? '; changing it moves the archive' }})</span></label><input type="text" name="slug" value="{{ editing_category ? editing_category.slug }}"></div>
+    </div>
+    <label>Archive intro <span class="mut">(HTML, shown on page 1 of the archive)</span></label>
+    <textarea name="description_html" class="code" rows="3">{{ editing_category ? editing_category.descriptionHtml }}</textarea>
+    <div class="row">
+      <div><label>SEO title</label><input type="text" name="seo_title" value="{{ editing_category ? editing_category.seoTitle }}"></div>
+      <div><label>SEO description</label><input type="text" name="seo_description" value="{{ editing_category ? editing_category.seoDescription }}"></div>
+    </div>
+    <p style="margin:.9rem 0 0">
+      <button class="button small" type="submit">{{ editing_category ? 'Save category' : 'Add category' }}</button>
+      {% if editing_category %}<a class="button small ghost" href="?type=post">Cancel</a>{% endif %}
+    </p>
+  </form>
+</details>
+{% endif %}
+
+{% if not trash and not creating and not editing and seo_issues|length %}
+<details class="card" style="border-color:rgba(245,158,11,.4)">
+  <summary style="font-weight:600;cursor:pointer">SEO lengths — {{ seo_issues|length }} issue(s) outside the Google limits</summary>
+  <p class="mut" style="font-size:.85rem;margin:.6rem 0 .6rem">Google truncates titles around 60 characters and descriptions around 156; under ~30/120 wastes the snippet. Checked is what ships: the SEO title (falling back to the title) and SEO description (falling back to the excerpt).</p>
+  {% if not seo_ai %}
+  <p style="font-size:.85rem;margin:0 0 .6rem;color:#f59e0b">No AI is available for this site — fixes can only <strong>truncate over-long</strong> values; too-short titles/descriptions need an AI rewrite. Add an OpenRouter key on <a href="/account">Account → AI keys</a> and select it under <a href="/sites/{{ site.handle }}/settings">Site Settings → Site details</a>.</p>
+  {% endif %}
+  <table>
+    <tr><th>Content</th><th>Problem</th><th>Length</th><th>Current text</th><th></th></tr>
+    {% for i in seo_issues %}
+    <tr>
+      <td><a href="?type={{ i.type }}&amp;edit={{ i.id }}">{{ i.slug }}</a></td>
+      <td><span class="badge warn">{{ i.kind }}</span></td>
+      <td class="mut">{{ i.length }} / {{ i.limit }}</td>
+      <td class="mut" style="max-width:26rem">{{ i.text|slice(0, 90) }}{{ i.text|length > 90 ? '…' }}</td>
+      <td class="rowacts">
+        <a class="button small ghost" href="?type={{ i.type }}&amp;edit={{ i.id }}">Edit</a>
+        <button class="button small ghost" type="button" data-seo-fix="{{ i.id }}" data-seo-slug="{{ i.slug }}" title="{{ seo_ai ? 'Rewrite just this one with AI' : 'No AI key — over-long values are truncated, too-short ones are skipped' }}">{{ seo_ai ? 'Fix with AI' : 'Truncate' }}</button>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p style="margin:.9rem 0 0">
+    <button class="button small" type="button" data-seo-fix-all>{{ seo_ai ? 'Fix all with AI' : 'Truncate all over-long' }}</button>
+    <span class="mut" style="font-size:.8rem;margin-left:.5rem">{{ seo_ai ? "Rewrites them to fit (uses the site's AI key or the engine's gateway; falls back to smart truncation for over-long ones), then republishes." : 'Without an AI key only over-long values can be truncated; too-short ones are skipped.' }}</span>
+  </p>
+</details>
+
+{# SEO-fix progress dialog: the CLIENT drives the run — one POST per flagged
+   row (op=row, a single AI call each), then op=publish once when anything
+   changed. Each step is a short request, so a failing AI shows its error on
+   the exact row it failed instead of a background job dying silently. #}
+<dialog id="seo-fix-modal" class="modal">
+  <div class="m-head"><h3 id="seo-fix-title">Fixing SEO lengths…</h3></div>
+  <div class="m-body">
+    <div style="height:.5rem;border:1px solid var(--border);border-radius:99px;overflow:hidden;background:var(--bg-2)">
+      <div id="seo-fix-bar" style="height:100%;width:0%;background:var(--accent);transition:width .25s ease"></div>
+    </div>
+    <p class="mut" id="seo-fix-step" style="font-size:.85rem;margin:.6rem 0 0"></p>
+    <div id="seo-fix-log" class="m-scroll" style="font-size:.83rem;margin-top:.6rem"></div>
+  </div>
+  <div class="m-actions"><button type="button" class="button small" id="seo-fix-close" data-modal-close disabled>Close</button></div>
+</dialog>
+
+<script>
+(function () {
+  var CSRF = {{ csrf|json_encode|raw }};
+  var URL = {{ ('/sites/' ~ site.handle ~ '/content/seo-fix')|json_encode|raw }};
+  // One entry per flagged CONTENT row — a row with a title AND a description
+  // issue is still one fix call.
+  var seen = {};
+  var ROWS = [];
+  {% for i in seo_issues %}
+  if (!seen[{{ i.id }}]) { seen[{{ i.id }}] = 1; ROWS.push({ id: {{ i.id }}, slug: {{ i.slug|json_encode|raw }} }); }
+  {% endfor %}
+
+  var dlg = document.getElementById('seo-fix-modal');
+  var bar = document.getElementById('seo-fix-bar');
+  var step = document.getElementById('seo-fix-step');
+  var log = document.getElementById('seo-fix-log');
+  var closeBtn = document.getElementById('seo-fix-close');
+  var running = false;
+  // The run mutates content — no closing (Esc/backdrop) mid-flight; a step in
+  // progress would finish server-side with the dialog gone.
+  dlg.addEventListener('cancel', function (e) { if (running) e.preventDefault(); });
+  dlg.addEventListener('click', function (e) { if (running) e.stopImmediatePropagation(); }, true);
+  dlg.addEventListener('close', function () { window.location.reload(); });
+
+  function line(text, cls) {
+    var p = document.createElement('p');
+    p.style.margin = '.25rem 0';
+    p.style.borderTop = '1px solid var(--border)';
+    p.style.paddingTop = '.25rem';
+    if (cls === 'err') p.style.color = '#f87171';
+    if (cls === 'mut') p.className = 'mut';
+    p.textContent = text;
+    log.appendChild(p);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function post(fields) {
+    var body = new URLSearchParams(fields);
+    body.set('_csrf', CSRF);
+    return fetch(URL, { method: 'POST', body: body, credentials: 'same-origin' }).then(function (res) {
+      return res.json().catch(function () {
+        throw new Error('HTTP ' + res.status + ' — unexpected response (are you still signed in?)');
+      });
+    }).then(function (json) {
+      if (!json.success) throw new Error((json.error && json.error.message) || 'Unknown error');
+      return json.data;
+    });
+  }
+
+  async function run(rows) {
+    running = true;
+    closeBtn.disabled = true;
+    bar.style.width = '0%';
+    log.textContent = '';
+    document.getElementById('seo-fix-title').textContent =
+      rows.length === 1 ? 'Fixing "' + rows[0].slug + '"…' : 'Fixing ' + rows.length + ' items…';
+    dlg.showModal();
+
+    var fixed = 0, failed = 0, skipped = 0;
+    // Typical raw SSE weight of one title+description answer — the scale
+    // that maps streamed bytes onto this row's slice of the bar. The cap
+    // keeps a chatty model from overshooting before the request returns.
+    var EXPECTED_BYTES = 6000;
+    for (let i = 0; i < rows.length; i++) {
+      let label = 'Rewriting ' + (i + 1) + ' of ' + rows.length + ': ' + rows[i].slug;
+      step.textContent = label + '…';
+      // Real progress WITHIN the row: while the AI answer streams from the
+      // gateway, the server drops its cumulative byte count into Redis and
+      // this poll moves the bar with the generation. (On a single-worker
+      // dev server the poll queues behind the row request — the bar then
+      // just falls back to per-row steps.)
+      let polling = true;
+      let poll = setInterval(function () {
+        post({ op: 'progress', id: rows[i].id }).then(function (d) {
+          if (!polling || !d.bytes) return; // a late response must not drag the bar back
+          var frac = Math.min(0.95, d.bytes / EXPECTED_BYTES);
+          bar.style.width = (((i + frac) / rows.length) * 100).toFixed(1) + '%';
+          step.textContent = label + ' — ' + (d.bytes / 1024).toFixed(1) + ' KB streamed…';
+        }).catch(function () {});
+      }, 400);
+      try {
+        var data = await post({ op: 'row', id: rows[i].id });
+        fixed += data.fixed; failed += data.failed; skipped += data.skipped;
+        (data.items || []).forEach(function (it) {
+          line(rows[i].slug + ' — ' + it.result, it.result.indexOf('failed') === 0 ? 'err' : (it.result.indexOf('fixed') === 0 ? '' : 'mut'));
+        });
+        if (!(data.items || []).length) line(rows[i].slug + ' — already within the limits', 'mut');
+      } catch (e) {
+        failed++;
+        line(rows[i].slug + ' — ' + e.message, 'err');
+      } finally {
+        polling = false;
+        clearInterval(poll);
+      }
+      bar.style.width = Math.round(((i + 1) / rows.length) * 100) + '%';
+    }
+
+    var summary = fixed + ' fixed, ' + skipped + ' skipped, ' + failed + ' failed.';
+    if (fixed > 0) {
+      step.textContent = 'Republishing the site…';
+      try {
+        await post({ op: 'publish' });
+        summary += ' Rebuild + publish queued.';
+      } catch (e) {
+        line('Republish failed: ' + e.message, 'err');
+      }
+    }
+    bar.style.width = '100%';
+    step.textContent = 'Done — ' + summary;
+    running = false;
+    closeBtn.disabled = false;
+  }
+
+  document.querySelectorAll('[data-seo-fix]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      run([{ id: parseInt(b.getAttribute('data-seo-fix'), 10), slug: b.getAttribute('data-seo-slug') }]);
+    });
+  });
+  var all = document.querySelector('[data-seo-fix-all]');
+  if (all) all.addEventListener('click', function () { run(ROWS); });
+})();
+</script>
+{% endif %}
 
 {% if creating or editing %}
 <div class="card">
@@ -92,6 +332,10 @@
     </div>
     <label>Excerpt</label>
     <input type="text" name="excerpt" value="{{ editing ? editing.excerpt }}">
+    <label>TL;DR <span class="mut">(HTML fragment — the shell renders it as a styled summary box; leave blank for none)</span></label>
+    <textarea name="tldr" class="code" rows="3">{{ editing ? editing.tldr }}</textarea>
+    <label>Intro <span class="mut">(HTML fragment — rendered as the styled lead above the body)</span></label>
+    <textarea name="intro" class="code" rows="3">{{ editing ? editing.intro }}</textarea>
     <label>Body HTML</label>
     <div class="wysiwyg" data-wysiwyg data-site="{{ site.handle }}">
       <div class="wy-toolbar" hidden>
@@ -138,11 +382,31 @@
       </div>
       <div><label>Publish date/time <span class="mut">(UTC — the date shown on the post; with status “scheduled” it also auto-publishes then)</span></label><input type="datetime-local" name="scheduled_at" value="{{ editing ? (editing.scheduledAt ?: editing.publishedAt)|slice(0, 16) }}"></div>
       <div><label>Author</label><input type="text" name="author_name" value="{{ editing ? editing.authorName }}"></div>
+      {% if (editing ? editing.type : type) == 'post' %}
+      <div>
+        <label>Category <span class="mut">(the archive it is listed in{{ '{category}' in site.postPathPattern ? ', and part of its URL' }})</span></label>
+        <select name="category">
+          <option value="">— none —</option>
+          {% for c in categories %}<option value="{{ c.id }}" {{ editing and editing.categoryId == c.id ? 'selected' }}>{{ c.name }} ({{ c.slug }})</option>{% endfor %}
+        </select>
+      </div>
+      {% endif %}
     </div>
+    <label>Conclusion <span class="mut">(HTML fragment — rendered as a closing section after the body)</span></label>
+    <textarea name="conclusion" class="code" rows="3">{{ editing ? editing.conclusion }}</textarea>
     <div class="row">
       <div><label>SEO title</label><input type="text" name="seo_title" value="{{ editing ? editing.seoTitle }}"></div>
       <div><label>SEO description</label><input type="text" name="seo_description" value="{{ editing ? editing.seoDescription }}"></div>
     </div>
+    <div class="row" style="margin-top:.6rem">
+      <div class="tight"><label style="display:flex;align-items:center;gap:.4rem;margin:0"><input type="checkbox" name="noindex" value="1" {{ editing and editing.noindex ? 'checked' }}> Hide from search engines <span class="mut">(noindex — also left out of sitemap.xml and llms.txt)</span></label></div>
+      <div class="tight"><label style="display:flex;align-items:center;gap:.4rem;margin:0"><input type="checkbox" name="nofollow" value="1" {{ editing and editing.nofollow ? 'checked' }}> Don't follow links <span class="mut">(nofollow)</span></label></div>
+    </div>
+    <details style="margin-top:.9rem">
+      <summary class="mut" style="cursor:pointer;font-size:.88rem">Extra structured data <span class="mut">(optional — a Product, Event, HowTo or Recipe for this page)</span></summary>
+      <p class="mut" style="font-size:.83rem;margin:.6rem 0 .35rem">This page already ships a schema.org graph describing the site, the page, its breadcrumb and (on posts) the article. Anything you put here is <strong>merged into</strong> that graph, so don't repeat those types. Paste a bare node, an array of nodes, or a <span class="mono">{"@graph":[…]}</span> document — <span class="mono">@context</span> is optional. A node declaring its own Article type replaces the generated one.</p>
+      <textarea name="json_ld" class="code" rows="6" spellcheck="false" placeholder='{"@type":"Product","name":"Widget","offers":{"@type":"Offer","price":"49.00","priceCurrency":"EUR"}}'>{{ editing ? editing.jsonLd }}</textarea>
+    </details>
     <p style="margin:1.25rem 0 0">
       <button class="button" type="submit">Save</button>
       <a class="button ghost" href="/sites/{{ site.handle }}/content?type={{ type }}">Cancel</a>
@@ -206,10 +470,13 @@
 
 {% if trash %}<p class="sub">Trash — deleted {{ type }}s. Restore brings one back; purge deletes it permanently.</p>{% endif %}
 
+{% set show_translations = site.locales|length and not trash %}
+{% set columns = 5 + (show_translations ? 1 : 0) + (trash ? 0 : 1) %}
 <table>
   <tr>
     <th>Title</th><th>Status</th><th>Slug</th>
-    {% if site.locales|length and not trash %}<th>Translations</th>{% endif %}
+    {% if show_translations %}<th>Translations</th>{% endif %}
+    {% if not trash %}<th>Indexable</th>{% endif %}
     <th>{{ trash ? 'Deleted' : 'Date' }}</th><th></th>
   </tr>
   {% for c in items %}
@@ -217,12 +484,23 @@
     <td>{{ c.title }}{% if c.warnings|length %} <span class="badge warn" title="{{ c.warnings|join(' ') }}">warn</span>{% endif %}</td>
     <td><span class="badge {{ c.status }}">{{ c.status }}</span></td>
     <td class="mono">{{ c.slug }}</td>
-    {% if site.locales|length and not trash %}
+    {% if show_translations %}
     <td>
       {% for locale in site.locales %}
         {% set st = translations[c.id][locale]|default('missing') %}
         <span class="badge {{ st == 'translated' or st == 'manual' ? 'ok' : (st == 'stale' or st == 'pending' ? 'warn' : 'err') }}" title="{{ locale_name(locale) }}: {{ st }}" style="display:inline-flex;align-items:center;gap:.25rem">{% if locale_flag_url(locale) %}<img src="{{ locale_flag_url(locale) }}" width="18" height="13" alt="" style="border-radius:2px;object-fit:cover;vertical-align:middle" onerror="this.replaceWith(document.createTextNode('{{ locale }}'))">{% else %}{{ locale_flag(locale) }}{% endif %}</span>
       {% endfor %}
+    </td>
+    {% endif %}
+    {% if not trash %}
+    <td>
+      {% if c.noindex %}
+        <span class="badge err" title="noindex — this page ships a robots meta tag and is left out of sitemap.xml and llms.txt">noindex</span>
+      {% elseif c.status == 'published' %}
+        <span class="badge ok" title="Indexable — in sitemap.xml and llms.txt">yes</span>
+      {% else %}
+        <span class="badge mut" title="{{ c.status }} — not built, so it isn't on the live site at all">—</span>
+      {% endif %}
     </td>
     {% endif %}
     <td class="mut">{{ trash ? c.deletedAt : (c.publishedAt ?: c.scheduledAt ?: c.createdAt) }}</td>
@@ -233,36 +511,79 @@
           <input type="hidden" name="_csrf" value="{{ csrf }}">
           <input type="hidden" name="action" value="restore">
           <input type="hidden" name="id" value="{{ c.id }}">
-          <button class="linkbtn" type="submit">restore</button>
+          <button class="button small ghost" type="submit">Restore</button>
         </form>
-        <form method="post" action="/sites/{{ site.handle }}/content/action" class="inline" data-confirm="Permanently delete “{{ c.title }}”? This cannot be undone." data-confirm-title="Delete permanently" data-confirm-ok="Delete" data-confirm-danger>
-          <input type="hidden" name="_csrf" value="{{ csrf }}">
-          <input type="hidden" name="action" value="purge">
-          <input type="hidden" name="id" value="{{ c.id }}">
-          <input type="hidden" name="type" value="{{ c.type }}">
-          <button class="linkbtn danger" type="submit">purge</button>
-        </form>
+        <div class="kebab">
+          <button type="button" class="kebab-trigger" data-kebab aria-haspopup="true" aria-label="More actions for {{ c.title }}">&#8942;</button>
+          <div class="kebab-menu">
+            <div class="danger-zone">
+              <span class="zone-label">Danger zone</span>
+              <form method="post" action="/sites/{{ site.handle }}/content/action" data-confirm="Permanently delete “{{ c.title }}”? This cannot be undone." data-confirm-title="Delete permanently" data-confirm-ok="Delete" data-confirm-danger>
+                <input type="hidden" name="_csrf" value="{{ csrf }}">
+                <input type="hidden" name="action" value="purge">
+                <input type="hidden" name="id" value="{{ c.id }}">
+                <input type="hidden" name="type" value="{{ c.type }}">
+                <button type="submit">Delete permanently</button>
+              </form>
+            </div>
+          </div>
+        </div>
       {% else %}
-        <a href="?type={{ type }}&amp;edit={{ c.id }}">edit</a>
-        <form method="post" action="/sites/{{ site.handle }}/content/action" class="inline" data-confirm="Move “{{ c.title }}” to trash?" data-confirm-title="Move to trash" data-confirm-ok="Move to trash">
-          <input type="hidden" name="_csrf" value="{{ csrf }}">
-          <input type="hidden" name="action" value="delete">
-          <input type="hidden" name="id" value="{{ c.id }}">
-          <button class="linkbtn danger" type="submit">delete</button>
-        </form>
+        <a class="button small ghost" href="?type={{ type }}&amp;edit={{ c.id }}{{ qs }}">Edit</a>
+        {# Preview deep-links into the site's own preview tree, which is built
+           from PUBLISHED content only — a draft has no page there to open. #}
+        {% if c.status == 'published' %}
+          {% set preview_path = (c.type == 'post' ? site.postPathPattern : site.pagePathPattern)|replace({'{slug}': c.slug})|trim('/') %}
+          <a class="button small ghost" href="/sites/{{ site.handle }}/preview/{{ preview_path }}/" target="_blank" rel="noopener"
+             title="Open this page in the site preview (rebuilds first if anything changed)">Preview</a>
+        {% else %}
+          <button class="button small ghost" type="button" disabled
+                  title="Only published content is built — set the status to published to preview this page.">Preview</button>
+        {% endif %}
+        <div class="kebab">
+          <button type="button" class="kebab-trigger" data-kebab aria-haspopup="true" aria-label="More actions for {{ c.title }}">&#8942;</button>
+          <div class="kebab-menu">
+            {% if site.locales|length %}
+            <form method="post" action="/sites/{{ site.handle }}/content/action"
+                  data-confirm="Re-translate “{{ c.title }}” into all {{ site.locales|length }} language{{ site.locales|length > 1 ? 's' }}? The current versions are discarded and regenerated from this page's source — use this when a translation is wrong even though it looks up to date."
+                  data-confirm-title="Re-translate this page" data-confirm-ok="Re-translate">
+              <input type="hidden" name="_csrf" value="{{ csrf }}">
+              <input type="hidden" name="action" value="retranslate">
+              <input type="hidden" name="id" value="{{ c.id }}">
+              <input type="hidden" name="type" value="{{ c.type }}">
+              <button type="submit" title="Force this page to translate again in every language">Re-translate</button>
+            </form>
+            {% endif %}
+            <div class="danger-zone">
+              <span class="zone-label">Danger zone</span>
+              <form method="post" action="/sites/{{ site.handle }}/content/action" data-confirm="Move “{{ c.title }}” to trash?" data-confirm-title="Move to trash" data-confirm-ok="Move to trash">
+                <input type="hidden" name="_csrf" value="{{ csrf }}">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="id" value="{{ c.id }}">
+                <button type="submit">Move to trash</button>
+              </form>
+            </div>
+          </div>
+        </div>
       {% endif %}
       </div>
     </td>
   </tr>
   {% else %}
-  <tr><td colspan="6" class="mut">{{ trash ? 'Trash is empty.' : 'No ' ~ type ~ 's yet.' }}</td></tr>
+  <tr><td colspan="{{ columns }}" class="mut">
+    {%- if search -%}
+      No {{ trash ? 'trashed ' }}{{ type }}s match “{{ search }}”.
+    {%- else -%}
+      {{ trash ? 'Trash is empty.' : 'No ' ~ type ~ 's yet.' }}
+    {%- endif -%}
+  </td></tr>
   {% endfor %}
 </table>
 
 {% if pages > 1 and not trash %}
 <p style="margin-top:1rem">
   {% for p in 1..pages %}
-    {% if p == page %}<strong>{{ p }}</strong>{% else %}<a href="?type={{ type }}&amp;page={{ p }}">{{ p }}</a>{% endif %}
+    {% if p == page %}<strong>{{ p }}</strong>{% else %}<a href="?type={{ type }}&amp;page={{ p }}{{ qs }}">{{ p }}</a>{% endif %}
   {% endfor %}
 </p>
 {% endif %}

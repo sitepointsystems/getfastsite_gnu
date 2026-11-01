@@ -59,7 +59,7 @@ final class ContentCreateHandler implements RequestHandlerInterface
             'type' => $created->type, 'slug' => $created->slug, 'status' => $created->status,
         ], ApiHelpers::clientIp($request));
 
-        $data = ApiHelpers::contentToArray($created);
+        $data = ApiHelpers::contentToArray($created, $site);
         if ($factCheck !== null) {
             $data['fact_check'] = $factCheck;
         }

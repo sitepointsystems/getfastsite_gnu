@@ -45,10 +45,13 @@ final class BuildFullHandler implements JobHandler
                 'started_at' => $this->clock->iso(),
             ]);
             $buildId = (int) $db->lastInsertId();
-            $context->heartbeat();
+            $context->progress('Building pages…');
 
             try {
-                $stats = $this->build->build($site, static fn () => $context->heartbeat());
+                // A publish someone asked for re-renders everything; background
+                // triggers stay incremental. PublishTrigger sets this.
+                $force = (bool) ($job->payload['force'] ?? false);
+                $stats = $this->build->build($site, static fn () => $context->heartbeat(), $force);
             } catch (\Throwable $e) {
                 $db->update('builds', [
                     'status' => 'failed',
