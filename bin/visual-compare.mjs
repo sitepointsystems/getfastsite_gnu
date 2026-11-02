@@ -16,9 +16,9 @@
 // fronted origins that block plain fetches still capture.
 
 import { chromium } from 'playwright';
-import { PNG } from 'pngjs';
+import sharp from 'sharp';
 import pixelmatch from 'pixelmatch';
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 const CHROME_FALLBACK = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
@@ -84,23 +84,20 @@ async function capturePage(browser, url, outDir, label) {
   return result;
 }
 
+// Decodes a PNG to RGBA, cropped to the top-left w x h.
+function rgba(path, w, h) {
+  return sharp(path).extract({ left: 0, top: 0, width: w, height: h }).ensureAlpha().raw().toBuffer();
+}
+
 // Pixel mismatch % over the overlapping region of two full-page shots.
-function pixelDiff(pathA, pathB, diffPath) {
-  const a = PNG.sync.read(readFileSync(pathA));
-  const b = PNG.sync.read(readFileSync(pathB));
+async function pixelDiff(pathA, pathB, diffPath) {
+  const [a, b] = await Promise.all([sharp(pathA).metadata(), sharp(pathB).metadata()]);
   const w = Math.min(a.width, b.width);
   const h = Math.min(a.height, b.height);
-  const crop = (img) => {
-    if (img.width === w && img.height === h) return img;
-    const out = new PNG({ width: w, height: h });
-    PNG.bitblt(img, out, 0, 0, w, h, 0, 0);
-    return out;
-  };
-  const ca = crop(a);
-  const cb = crop(b);
-  const diff = new PNG({ width: w, height: h });
-  const mismatched = pixelmatch(ca.data, cb.data, diff.data, w, h, { threshold: 0.1 });
-  writeFileSync(diffPath, PNG.sync.write(diff));
+  const [ca, cb] = await Promise.all([rgba(pathA, w, h), rgba(pathB, w, h)]);
+  const diff = Buffer.alloc(w * h * 4);
+  const mismatched = pixelmatch(ca, cb, diff, w, h, { threshold: 0.1 });
+  await sharp(diff, { raw: { width: w, height: h, channels: 4 } }).png().toFile(diffPath);
   return {
     mismatch_pct: +((mismatched / (w * h)) * 100).toFixed(2),
     compared: `${w}x${h}`,
@@ -140,7 +137,7 @@ async function main() {
       const rb = await capturePage(browser, urlB, outDir, 'new');
       const diffs = {};
       for (const vp of Object.keys(VIEWPORTS)) {
-        diffs[vp] = pixelDiff(ra.viewports[vp].png, rb.viewports[vp].png, join(outDir, `diff-${vp}.png`));
+        diffs[vp] = await pixelDiff(ra.viewports[vp].png, rb.viewports[vp].png, join(outDir, `diff-${vp}.png`));
       }
       const report = {
         ok: true,
